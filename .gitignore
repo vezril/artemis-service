@@ -1,0 +1,22 @@
+# sbt / Scala
+target/
+project/target/
+project/project/
+.bsp/
+.metals/
+.bloop/
+metals.sbt
+
+# IDE
+.idea/
+*.iml
+
+# OS
+.DS_Store
+
+# Local env / secrets
+.env
+*.local
+
+# Claude Code local settings (personal, per-machine — commands/ and skills/ ARE tracked)
+.claude/settings.local.json
