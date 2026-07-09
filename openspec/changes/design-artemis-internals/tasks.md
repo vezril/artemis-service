@@ -47,8 +47,14 @@ pure domain → projections → ingest → API → media gateway.
            keyset cursor, order, and autocomplete DEFERRED to the search-DSL milestone (M5, in the
            design-artemis-tag-search change) since they need the DSL→SQL compiler. -->
 - [x] 5.2 (test) writes → commands (`POST /posts`, `PATCH …/tags`, favorite, score, pools); 404 on missing
-- [ ] 5.3 (test) media gateway streams Apollo derivatives over HTTP; `206` for video ranges
-- [ ] 5.4 (impl) pekko-http routes + media streaming; wire to entities + projections
+- [x] 5.3 (test) media gateway streams Apollo derivatives over HTTP; `206` for video ranges
+      <!-- `GET /media/{md5}/{variant}` behind a `MediaSource` port (`ApolloMediaSource` peels the
+           getObject header/body); 200 full, 206 + Content-Range (byte-sliced across chunks), 416,
+           404, Accept-Ranges — all route-tested Docker-free. -->
+- [~] 5.4 (impl) pekko-http routes + media streaming; wire to entities + projections
+      <!-- Write routes (5.2, wired to entities) + read-by-id + the media-streaming gateway (5.3) DONE.
+           The DSL `GET /posts` list routes (wire to projections) remain — deferred to the search-DSL
+           milestone (see 5.1). -->
 
 ## 6. Integration
 
