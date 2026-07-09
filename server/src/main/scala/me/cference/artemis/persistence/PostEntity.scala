@@ -39,23 +39,35 @@ object PostEntity:
   def persistenceId(post: String): PersistenceId =
     PersistenceId.ofUniqueId(s"$EntityPrefix|$post")
 
-  def apply(post: PostId): Behavior[Command] =
+  /**
+   * @param tagGraph
+   *   supplies the tag relationship graph consulted when canonicalizing `ChangeTags`. Defaults to
+   *   `() => TagGraph.empty` so existing call sites keep the no-graph behavior. Production injects
+   *   `() => cachedGraph` — a periodically-refreshed snapshot loaded via
+   *   [[me.cference.artemis.tags.TagGraphRepository]]. The snapshot is read per command (cheap map
+   *   lookup) rather than reloaded from the DB; the cache/refresh loop that keeps it current is a
+   *   later milestone (M9) and is intentionally not built here.
+   */
+  def apply(
+      post: PostId,
+      tagGraph: () => TagGraph = () => TagGraph.empty
+  ): Behavior[Command] =
     EventSourcedBehavior[Command, PostEvent, PostState](
       persistenceId = persistenceId(post.value),
       emptyState = PostState.initial,
-      commandHandler = handleCommand,
+      commandHandler = handleCommand(tagGraph),
       eventHandler = PostDomain.evolve
     )
 
   private def handleCommand(
+      tagGraph: () => TagGraph
+  )(
       state: PostState,
       command: Command
   ): Effect[PostEvent, PostState] =
     command match
       case Execute(domain, replyTo) =>
-        // Tag canonicalization uses the empty graph for now; the real tag graph is injected in a
-        // later milestone (roadmap M4).
-        PostDomain.decide(state, domain, TagGraph.empty) match
+        PostDomain.decide(state, domain, tagGraph()) match
           case Right(events) =>
             Effect.persist(events).thenReply(replyTo)(_ => StatusReply.ack())
           case Left(error) =>
