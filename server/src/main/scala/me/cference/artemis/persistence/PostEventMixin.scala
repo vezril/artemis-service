@@ -13,6 +13,7 @@ import com.fasterxml.jackson.annotation.{JsonSubTypes, JsonTypeInfo}
   Array(
     new JsonSubTypes.Type(value = classOf[PostEvent.PostCreated], name = "PostCreated"),
     new JsonSubTypes.Type(value = classOf[PostEvent.MediaProcessed], name = "MediaProcessed"),
+    new JsonSubTypes.Type(value = classOf[PostEvent.ProcessingFailed], name = "ProcessingFailed"),
     new JsonSubTypes.Type(value = classOf[PostEvent.PostDeleted], name = "PostDeleted"),
     new JsonSubTypes.Type(value = classOf[PostEvent.PostRestored], name = "PostRestored"),
     new JsonSubTypes.Type(value = classOf[PostEvent.TagsChanged], name = "TagsChanged"),

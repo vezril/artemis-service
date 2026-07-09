@@ -25,10 +25,18 @@ pure domain → projections → ingest → API → media gateway.
 
 ## 4. Ingest & processing
 
-- [ ] 4.1 (test) upload: md5-on-stream → Apollo, pending Post, publish `ProcessMediaJob`; checksum-mismatch aborts
-- [ ] 4.2 (test) consume `MediaProcessed`→active / `MediaFailed`→failed; idempotent per `jobId`
+- [x] 4.1 (test) upload: md5-on-stream → Apollo, pending Post, publish `ProcessMediaJob`; checksum-mismatch aborts
+      <!-- `UploadService` behind `ObjectUploader`/`MediaJobPublisher` ports; abort-ordering verified. -->
+- [x] 4.2 (test) consume `MediaProcessed`→active / `MediaFailed`→failed; idempotent per `jobId`
+      <!-- `MediaResultHandler` + `failed`-state domain extension (MarkFailed→ProcessingFailed→Failed,
+           idempotent in the domain); dedup via `ProcessedJobs` port is an optimization on top. -->
 - [ ] 4.3 (test) post-processing phash dup flag (Hamming threshold); unique → no flag
-- [ ] 4.4 (impl) Apollo gRPC client (streaming), HermesMQ publish/consume wiring
+      <!-- DEFERRED to its own pass — needs a dup-flag domain event (PossibleDuplicateFlagged) +
+           projection column + Hamming detection, to stay rebuildable/event-sourced. -->
+- [~] 4.4 (impl) Apollo gRPC client (streaming), HermesMQ publish/consume wiring
+      <!-- Apollo gRPC client DONE (adopt-lexicon-contracts: `ApolloObjectClient`/`ApolloObjectUploader`).
+           Publish/consume LOGIC built behind ports (`MediaJobPublisher`/`ProcessedJobs`). The concrete
+           `lexicon-hermes-grpc` adapter is deferred until that contract cuts a clean release. -->
 
 ## 5. Catalog API + media gateway
 

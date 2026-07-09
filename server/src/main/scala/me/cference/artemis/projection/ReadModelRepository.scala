@@ -101,7 +101,7 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
         withDuration.bind(4, phash).bind(5, derivativesJson).bind(6, status)
     ).map(_ => ())
 
-  private def setStatus(id: String, status: String): Future[Unit] =
+  def setStatus(id: String, status: String): Future[Unit] =
     update("UPDATE posts SET status = $2 WHERE id = $1", _.bind(0, id).bind(1, status))
       .map(_ => ())
 

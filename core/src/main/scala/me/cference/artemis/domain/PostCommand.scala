@@ -7,8 +7,9 @@ import java.time.Instant
  * (`PostId`, `Tag`, `Rating`, …) — raw unvalidated `String`s cannot enter the aggregate.
  *
  * `at` is the caller-supplied instant the command was issued; the pure decider stamps produced
- * events with it, keeping transitions deterministic (no hidden clock reads). The entity layer fills
- * it with `Instant.now()` on receipt.
+ * events with it, keeping transitions deterministic (no hidden clock reads). The effectful caller
+ * (e.g. the HTTP routes or the ingest services) fills it with `Instant.now()` when issuing the
+ * command; the entity passes commands through unchanged.
  */
 sealed trait PostCommand:
   def at: Instant
@@ -23,6 +24,12 @@ object PostCommand:
       phash: Phash,
       at: Instant
   ) extends PostCommand
+
+  /**
+   * Fail a pending post's processing (Hephaestus reported a `MediaFailed`). Only a `Pending` post
+   * can transition to `Failed`; the decider rejects this on any other state.
+   */
+  final case class MarkFailed(reason: String, at: Instant) extends PostCommand
 
   final case class Delete(at: Instant) extends PostCommand
   final case class Restore(at: Instant) extends PostCommand

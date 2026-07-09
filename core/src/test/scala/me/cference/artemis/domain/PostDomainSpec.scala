@@ -124,6 +124,45 @@ final class PostDomainSpec extends AnyWordSpec with Matchers:
     }
   }
 
+  "PostDomain failed processing lifecycle" should {
+
+    "mark a pending post failed, folding to Failed" in {
+      val Right(events) = PostDomain.decide(created, MarkFailed("decode error", now)): @unchecked
+      events shouldBe Seq(ProcessingFailed("decode error", now))
+      PostDomain.replay(
+        Seq(PostCreated(postId, md5, filetype, now)) ++ events
+      ) shouldBe PostState.Failed(postId, md5, filetype, "decode error")
+    }
+
+    "reject a command on a failed post with zero events (terminal state)" in {
+      val failed = PostDomain.replay(
+        Seq(
+          PostCreated(postId, md5, filetype, now),
+          ProcessingFailed("decode error", now)
+        )
+      )
+      PostDomain.decide(failed, RecordProcessed(dims, derivatives, phash, now)) shouldBe
+        Left(DomainError.PostNotFound)
+    }
+
+    "reject MarkFailed on an active post with zero events (only a pending post can fail)" in {
+      PostDomain.decide(active, MarkFailed("too late", now)) shouldBe
+        Left(DomainError.PostNotFound)
+    }
+
+    "accept MarkFailed on an already-failed post as an idempotent no-op" in {
+      // Redelivered MediaFailed must not surface a spurious rejection — the terminal transition is
+      // idempotent in the domain (a re-mark emits nothing), independent of any consumer dedup guard.
+      val failed = PostDomain.replay(
+        Seq(
+          PostCreated(postId, md5, filetype, now),
+          ProcessingFailed("decode error", now)
+        )
+      )
+      PostDomain.decide(failed, MarkFailed("again", now)) shouldBe Right(Seq.empty)
+    }
+  }
+
   "PostDomain ChangeTags canonicalization" should {
 
     "canonicalize the requested tags before emitting TagsChanged" in {
