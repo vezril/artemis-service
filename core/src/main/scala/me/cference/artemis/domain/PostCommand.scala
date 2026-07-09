@@ -61,3 +61,10 @@ object PostCommand:
   final case class Score(delta: Int, at: Instant) extends PostCommand
 
   final case class SetSource(source: String, at: Instant) extends PostCommand
+
+  /**
+   * Flag this post as a possible perceptual duplicate of `matchedPostId` (post-processing found its
+   * phash within the Hamming threshold of an existing post). Idempotent: re-flagging with the same
+   * matched id emits nothing; only an active post can be flagged.
+   */
+  final case class FlagPossibleDuplicate(matchedPostId: PostId, at: Instant) extends PostCommand

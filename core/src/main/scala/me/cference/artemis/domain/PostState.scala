@@ -37,7 +37,8 @@ final case class PostContent(
     parent: Option[PostId] = None,
     favorited: Boolean = false,
     score: Int = 0,
-    source: Option[String] = None
+    source: Option[String] = None,
+    duplicateOf: Option[PostId] = None
 )
 
 object PostContent:

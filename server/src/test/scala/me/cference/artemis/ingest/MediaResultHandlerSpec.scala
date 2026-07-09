@@ -139,6 +139,46 @@ final class MediaResultHandlerSpec
         case other => fail(s"expected Active, got $other")
     }
 
+    "flag the post as a possible duplicate when near-duplicate detection matches" in {
+      val jobs = new InMemoryProcessedJobs
+      val handler = new MediaResultHandler(jobs, postFor, new FakeNearDuplicates(Some("mp-match")))
+      createPending("mpd1")
+
+      handler.onProcessed(processed("j-mpd1", "mpd1", 800, 600)).futureValue
+
+      getState("mpd1") match
+        case PostState.Active(_, _, content) =>
+          content.duplicateOf shouldBe Some(PostId.unsafe("mp-match"))
+        case other => fail(s"expected Active, got $other")
+    }
+
+    "leave a unique post unflagged when near-duplicate detection finds no match" in {
+      val jobs = new InMemoryProcessedJobs
+      val handler = new MediaResultHandler(jobs, postFor, new FakeNearDuplicates(None))
+      createPending("mpd2")
+
+      handler.onProcessed(processed("j-mpd2", "mpd2", 800, 600)).futureValue
+
+      getState("mpd2") match
+        case PostState.Active(_, _, content) => content.duplicateOf shouldBe None
+        case other => fail(s"expected Active, got $other")
+    }
+
+    "activate and complete even if near-duplicate detection fails (best-effort warning)" in {
+      // The dup notice must never block ingest: a read-model outage degrades to "not flagged",
+      // the post still activates, and the job is marked applied (no redelivery wedge).
+      val jobs = new InMemoryProcessedJobs
+      val handler = new MediaResultHandler(jobs, postFor, new FailingNearDuplicates)
+      createPending("mpd3")
+
+      handler.onProcessed(processed("j-mpd3", "mpd3", 800, 600)).futureValue // does NOT fail
+
+      getState("mpd3") match
+        case PostState.Active(_, _, content) => content.duplicateOf shouldBe None
+        case other => fail(s"expected Active, got $other")
+      jobs.isApplied("j-mpd3").futureValue shouldBe true
+    }
+
     "fail a MediaProcessed with no metadata rather than activate a 0x0 post" in {
       val jobs = new InMemoryProcessedJobs
       val handler = new MediaResultHandler(jobs, postFor)
@@ -212,3 +252,13 @@ final class MediaResultHandlerSpec
   final private class ForgetfulProcessedJobs extends ProcessedJobs:
     def isApplied(jobId: String): Future[Boolean] = Future.successful(false)
     def markApplied(jobId: String): Future[Unit] = Future.unit
+
+  /** A near-duplicate port returning a fixed answer, exercising the flag/no-flag wiring. */
+  /** A read model that always errors — stands in for a momentary dedup-query outage. */
+  final private class FailingNearDuplicates extends NearDuplicates:
+    def findNear(phash: String, excludeId: String): Future[Option[String]] =
+      Future.failed(new RuntimeException("read model unavailable"))
+
+  final private class FakeNearDuplicates(result: Option[String]) extends NearDuplicates:
+    def findNear(phash: String, excludeId: String): Future[Option[String]] =
+      Future.successful(result)

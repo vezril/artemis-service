@@ -1,17 +1,19 @@
 package me.cference.artemis.ingest
 
 import codex.messages.v1.{MediaFailed, MediaProcessed}
-import me.cference.artemis.domain.PostCommand.{MarkFailed, RecordProcessed}
-import me.cference.artemis.domain.{Derivative, Dimensions, Phash, PostCommand}
+import me.cference.artemis.domain.PostCommand.{FlagPossibleDuplicate, MarkFailed, RecordProcessed}
+import me.cference.artemis.domain.{Derivative, Dimensions, Phash, PostCommand, PostId}
 import me.cference.artemis.persistence.PostEntity
 import org.apache.pekko.Done
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.actor.typed.RecipientRef
 import org.apache.pekko.actor.typed.scaladsl.AskPattern.*
 import org.apache.pekko.util.Timeout
+import org.slf4j.LoggerFactory
 
 import java.time.Instant
 import scala.concurrent.Future
+import scala.util.control.NonFatal
 
 /**
  * The consume path (OpenSpec task 4.2): drives a post from Hephaestus results. `MediaProcessed`
@@ -26,10 +28,12 @@ import scala.concurrent.Future
  */
 final class MediaResultHandler(
     processedJobs: ProcessedJobs,
-    postFor: String => RecipientRef[PostEntity.Command]
+    postFor: String => RecipientRef[PostEntity.Command],
+    nearDuplicates: NearDuplicates = NearDuplicates.none
 )(using system: ActorSystem[?], timeout: Timeout):
 
   private given scala.concurrent.ExecutionContext = system.executionContext
+  private val log = LoggerFactory.getLogger(getClass)
 
   def onProcessed(m: MediaProcessed): Future[Unit] =
     // A successful process must carry valid metadata; absent/invalid dimensions fail the Future
@@ -38,8 +42,37 @@ final class MediaResultHandler(
       case Left(err) => Future.failed(new IllegalArgumentException(err))
       case Right(dims) =>
         once(m.jobId) {
+          // Post-processing (option B): after the post is active, compare its phash against
+          // existing posts and flag it if a near-duplicate is found. Inside the once(jobId) guard,
+          // so redelivery of the same job never re-flags. A `None` match leaves the post unique.
           execute(m.postId, RecordProcessed(dims, derivatives(m), Phash(m.phash), now()))
+            .flatMap(_ => bestEffortFlag(m))
         }
+
+  /**
+   * Detect a near-duplicate for the just-activated post and issue the dup-flag command if found.
+   * Best-effort: the dup notice is a post-processing WARNING that must never block ingest, so a
+   * failure (e.g. the read model is momentarily unavailable) degrades to "not flagged" rather than
+   * failing `onProcessed` — which would skip `markApplied` and wedge the job in redelivery. The
+   * activation itself is already durable and idempotent on replay.
+   */
+  private def bestEffortFlag(m: MediaProcessed): Future[Done] =
+    flagIfDuplicate(m).recover { case NonFatal(e) =>
+      log.warn(
+        "duplicate detection failed for post {} (job {}): {}",
+        m.postId,
+        m.jobId,
+        e.getMessage
+      )
+      Done
+    }
+
+  private def flagIfDuplicate(m: MediaProcessed): Future[Done] =
+    nearDuplicates.findNear(m.phash, m.postId).flatMap {
+      case Some(matchedId) =>
+        execute(m.postId, FlagPossibleDuplicate(PostId.unsafe(matchedId), now()))
+      case None => Future.successful(Done)
+    }
 
   def onFailed(m: MediaFailed): Future[Unit] =
     once(m.jobId) {

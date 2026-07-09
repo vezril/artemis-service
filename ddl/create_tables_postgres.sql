@@ -123,6 +123,10 @@ CREATE TABLE IF NOT EXISTS posts (
   source      TEXT,
   status      VARCHAR(16) NOT NULL,
   derivatives JSONB NOT NULL DEFAULT '[]',
+  -- Post-processing near-duplicate flag: the id of an existing post this one perceptually
+  -- resembles (Hamming distance within threshold), or NULL if it looks unique. Set from the
+  -- `PossibleDuplicateFlagged` domain event, so it rebuilds by replay.
+  duplicate_of VARCHAR(255),
   created_at  timestamp with time zone NOT NULL
 );
 

@@ -47,3 +47,10 @@ object PostEvent:
    */
   final case class Scored(score: Int, at: Instant) extends PostEvent
   final case class SourceChanged(source: String, at: Instant) extends PostEvent
+
+  /**
+   * Post-processing found this post's phash within the near-duplicate threshold of an existing
+   * post. The flag is a domain event (not a read-side side-write) so the read model stays
+   * rebuildable by replay. `matchedPostId` is the existing post it resembles.
+   */
+  final case class PossibleDuplicateFlagged(matchedPostId: PostId, at: Instant) extends PostEvent

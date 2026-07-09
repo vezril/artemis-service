@@ -202,6 +202,42 @@ final class PostDomainSpec extends AnyWordSpec with Matchers:
     }
   }
 
+  "PostDomain possible-duplicate flag" should {
+
+    "emit PossibleDuplicateFlagged for an active post and fold the reference into content" in {
+      val matched = PostId.unsafe("post|42")
+      val Right(events) =
+        PostDomain.decide(active, FlagPossibleDuplicate(matched, now)): @unchecked
+      events shouldBe Seq(PossibleDuplicateFlagged(matched, now))
+      events.foldLeft(active)(PostDomain.evolve) match
+        case PostState.Active(_, _, content) => content.duplicateOf shouldBe Some(matched)
+        case other => fail(s"expected Active, got $other")
+    }
+
+    "treat re-flagging with the same matched id as an idempotent no-op" in {
+      val matched = PostId.unsafe("post|42")
+      val flagged = PostDomain.decide(active, FlagPossibleDuplicate(matched, now)) match
+        case Right(evs) => evs.foldLeft(active)(PostDomain.evolve)
+        case Left(err) => fail(err.message)
+      PostDomain.decide(flagged, FlagPossibleDuplicate(matched, now)) shouldBe Right(Seq.empty)
+    }
+
+    "re-flag when the matched id differs from the one already recorded" in {
+      val first = PostId.unsafe("post|42")
+      val second = PostId.unsafe("post|99")
+      val flagged = PostDomain.decide(active, FlagPossibleDuplicate(first, now)) match
+        case Right(evs) => evs.foldLeft(active)(PostDomain.evolve)
+        case Left(err) => fail(err.message)
+      PostDomain.decide(flagged, FlagPossibleDuplicate(second, now)) shouldBe
+        Right(Seq(PossibleDuplicateFlagged(second, now)))
+    }
+
+    "reject FlagPossibleDuplicate on a pending post with zero events" in {
+      PostDomain.decide(created, FlagPossibleDuplicate(PostId.unsafe("post|42"), now)) shouldBe
+        Left(DomainError.PostNotFound)
+    }
+  }
+
   "PostDomain rating, relationships, favorites, and scores" should {
 
     "emit RatingChanged for a valid rating and fold it into content" in {

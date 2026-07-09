@@ -22,7 +22,11 @@ import com.fasterxml.jackson.annotation.{JsonSubTypes, JsonTypeInfo}
     new JsonSubTypes.Type(value = classOf[PostEvent.Favorited], name = "Favorited"),
     new JsonSubTypes.Type(value = classOf[PostEvent.Unfavorited], name = "Unfavorited"),
     new JsonSubTypes.Type(value = classOf[PostEvent.Scored], name = "Scored"),
-    new JsonSubTypes.Type(value = classOf[PostEvent.SourceChanged], name = "SourceChanged")
+    new JsonSubTypes.Type(value = classOf[PostEvent.SourceChanged], name = "SourceChanged"),
+    new JsonSubTypes.Type(
+      value = classOf[PostEvent.PossibleDuplicateFlagged],
+      name = "PossibleDuplicateFlagged"
+    )
   )
 )
 private[persistence] trait PostEventMixin

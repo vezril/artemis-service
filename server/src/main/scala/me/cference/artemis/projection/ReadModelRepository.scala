@@ -29,7 +29,8 @@ final case class PostRow(
     width: Option[Int],
     height: Option[Int],
     duration: Option[Long],
-    parentId: Option[String]
+    parentId: Option[String],
+    duplicateOf: Option[String]
 )
 
 /**
@@ -145,6 +146,25 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
     update("UPDATE posts SET source = $2 WHERE id = $1", _.bind(0, id).bind(1, source))
       .map(_ => ())
 
+  /** Record that a post is a possible perceptual duplicate of `matchedId` — an idempotent set. */
+  def setDuplicateOf(id: String, matchedId: String): Future[Unit] =
+    update("UPDATE posts SET duplicate_of = $2 WHERE id = $1", _.bind(0, id).bind(1, matchedId))
+      .map(_ => ())
+
+  /**
+   * The `(id, phash)` pairs of active posts with a non-empty phash, excluding `excludeId`. Feeds
+   * near-duplicate detection — the just-activated post is compared against these existing phashes.
+   */
+  def activePhashes(excludeId: String): Future[Seq[(String, String)]] =
+    query(
+      """SELECT id, phash FROM posts
+        |WHERE status = 'active' AND id <> $1 AND phash IS NOT NULL AND phash <> ''
+        |ORDER BY id""".stripMargin,
+      _.bind(0, excludeId)
+    ) { row =>
+      (row.get("id", classOf[String]), row.get("phash", classOf[String]))
+    }
+
   /** Set the score absolutely (the `Scored` event carries the total) — a pure idempotent upsert. */
   def setScore(id: String, score: Int): Future[Unit] =
     update(
@@ -254,7 +274,8 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
 
   def getPost(id: String): Future[Option[PostRow]] =
     query(
-      """SELECT id, tags, status, score, fav_count, rating, width, height, duration, parent_id
+      """SELECT id, tags, status, score, fav_count, rating, width, height, duration, parent_id,
+        |       duplicate_of
         |FROM posts WHERE id = $1""".stripMargin,
       _.bind(0, id)
     ) { row =>
@@ -268,7 +289,8 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
         width = Option(row.get("width", classOf[Integer])).map(_.intValue),
         height = Option(row.get("height", classOf[Integer])).map(_.intValue),
         duration = Option(row.get("duration", classOf[java.lang.Long])).map(_.longValue),
-        parentId = Option(row.get("parent_id", classOf[String]))
+        parentId = Option(row.get("parent_id", classOf[String])),
+        duplicateOf = Option(row.get("duplicate_of", classOf[String]))
       )
     }.map(_.headOption)
 
