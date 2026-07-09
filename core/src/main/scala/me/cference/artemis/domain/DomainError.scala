@@ -13,6 +13,7 @@ object DomainError:
   final case class InvalidPoolId(message: String) extends DomainError
   final case class InvalidPoolName(message: String) extends DomainError
   final case class InvalidTag(message: String) extends DomainError
+  final case class InvalidTagCategory(message: String) extends DomainError
   final case class InvalidRating(message: String) extends DomainError
   final case class InvalidDimensions(message: String) extends DomainError
 

@@ -148,6 +148,24 @@ CREATE TABLE IF NOT EXISTS tags (
 
 CREATE INDEX IF NOT EXISTS tags_name_trgm ON tags USING GIN (name gin_trgm_ops);
 
+-- tag_aliases: same-meaning rename. One terminal consequent per antecedent (PK on antecedent);
+-- alias chains resolve to a terminal consequent in `TagCanonicalization`, not here.
+CREATE TABLE IF NOT EXISTS tag_aliases (
+  antecedent VARCHAR(255) PRIMARY KEY,
+  consequent VARCHAR(255) NOT NULL
+);
+
+-- tag_implications: entailment edges. These are DIRECT edges only; the transitive closure is
+-- computed at write/search time by `TagCanonicalization`, never stored, so the graph stays small
+-- and rule edits don't require recomputing/persisting a closure.
+CREATE TABLE IF NOT EXISTS tag_implications (
+  antecedent VARCHAR(255) NOT NULL,
+  consequent VARCHAR(255) NOT NULL,
+  PRIMARY KEY (antecedent, consequent)
+);
+
+CREATE INDEX IF NOT EXISTS tag_implications_antecedent_idx ON tag_implications (antecedent);
+
 -- pools + ordered membership.
 CREATE TABLE IF NOT EXISTS pools (
   id   VARCHAR(255) PRIMARY KEY,

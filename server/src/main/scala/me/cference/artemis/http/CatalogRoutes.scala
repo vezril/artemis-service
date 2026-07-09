@@ -186,8 +186,9 @@ final class CatalogRoutes(
           case DomainError.PostAlreadyExists | DomainError.PoolAlreadyExists =>
             StatusCodes.Conflict
           case _: DomainError.InvalidRating | _: DomainError.InvalidTag |
-              _: DomainError.InvalidPostId | _: DomainError.InvalidPoolId |
-              _: DomainError.InvalidPoolName | _: DomainError.InvalidDimensions =>
+              _: DomainError.InvalidTagCategory | _: DomainError.InvalidPostId |
+              _: DomainError.InvalidPoolId | _: DomainError.InvalidPoolName |
+              _: DomainError.InvalidDimensions =>
             StatusCodes.BadRequest
       case _ => StatusCodes.InternalServerError
 
