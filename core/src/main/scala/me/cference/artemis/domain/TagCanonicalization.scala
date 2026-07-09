@@ -19,8 +19,12 @@ object TagCanonicalization:
     val aliased = tags.map(resolveAlias(_, graph.aliases))
     expandImplications(aliased, graph.implications)
 
-  /** Follow the alias chain to a terminal consequent; a cycle stops at the first repeat. */
-  private def resolveAlias(tag: Tag, aliases: Map[Tag, Tag]): Tag =
+  /**
+   * Follow the alias chain to a terminal consequent; a cycle stops at the first repeat. Public so
+   * the search path (`AliasResolver`) applies the exact same single-tag resolution as the write
+   * path, rather than duplicating the chain-follow logic.
+   */
+  def resolveAlias(tag: Tag, aliases: Map[Tag, Tag]): Tag =
     @tailrec
     def loop(current: Tag, seen: Set[Tag]): Tag =
       aliases.get(current) match
