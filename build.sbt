@@ -45,7 +45,7 @@ lazy val scalaTestVersion = "3.2.19"
 // codex.messages.v1 async messages. Pinned to a clean tagged release; consumed as
 // published jars (no Apollo/object_api codegen runs here). Resolved from GitHub
 // Packages in CI, or `~/.ivy2/local` after `sbt publishLocal` in the-lexicon.
-lazy val lexiconVersion = "0.3.0"
+lazy val lexiconVersion = "0.5.0"
 lazy val testcontainersVersion = "0.41.4"
 lazy val logbackVersion = "1.5.12"
 
@@ -101,9 +101,11 @@ lazy val server = (project in file("server"))
     libraryDependencies ++= Seq(
       "org.apache.pekko" %% "pekko-actor-typed" % pekkoVersion,
       "org.apache.pekko" %% "pekko-stream" % pekkoVersion,
-      // Shared Codex wire contracts (the-lexicon): Apollo gRPC client + async messages.
+      // Shared Codex wire contracts (the-lexicon): Apollo gRPC client, async messages, and the
+      // HermesMQ PubSub gRPC client (the media-job transport).
       "io.codex" %% "lexicon-grpc" % lexiconVersion,
       "io.codex" %% "lexicon-messages" % lexiconVersion,
+      "io.codex" %% "lexicon-hermes-grpc" % lexiconVersion,
       // Catalog REST/JSON API (roadmap M6/M7).
       "org.apache.pekko" %% "pekko-http" % pekkoVersion,
       "org.apache.pekko" %% "pekko-http-spray-json" % pekkoVersion,

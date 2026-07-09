@@ -31,6 +31,22 @@ final case class ApolloConfig(
 )
 
 /**
+ * Coordinates for the HermesMQ pub/sub gRPC endpoint, consumed by
+ * [[me.cference.artemis.hermes.HermesClient]], plus the media-contract topic/subscription names.
+ * Artemis PUBLISHES `ProcessMediaJob` to `topicMediaProcess` and CONSUMES `MediaProcessed` /
+ * `MediaFailed` from `subMediaProcessed` / `subMediaFailed`. Read from `artemis.hermes`; every
+ * value is env-overridable in `application.conf` so no endpoint or channel name is hard-coded.
+ */
+final case class HermesConfig(
+    host: String,
+    port: Int,
+    useTls: Boolean,
+    topicMediaProcess: String,
+    subMediaProcessed: String,
+    subMediaFailed: String
+)
+
+/**
  * Post-processing near-duplicate detection knob. `hammingThreshold` is the maximum bit-difference
  * between two phashes for the newer post to be flagged a possible duplicate of the older. Read from
  * `artemis.dedup`, env-overridable.
@@ -56,6 +72,17 @@ object AppConfig:
       host = ac.getString("host"),
       port = ac.getInt("port"),
       useTls = ac.getBoolean("tls")
+    )
+
+  def hermes(config: Config): HermesConfig =
+    val hc = config.getConfig("artemis.hermes")
+    HermesConfig(
+      host = hc.getString("host"),
+      port = hc.getInt("port"),
+      useTls = hc.getBoolean("tls"),
+      topicMediaProcess = hc.getString("topic-media-process"),
+      subMediaProcessed = hc.getString("sub-media-processed"),
+      subMediaFailed = hc.getString("sub-media-failed")
     )
 
   def dedup(config: Config): DedupConfig =
