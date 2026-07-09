@@ -118,6 +118,8 @@ lazy val server = (project in file("server"))
       // Postgres r2dbc driver (explicit since r2dbc 1.1.0).
       "org.postgresql" % "r2dbc-postgresql" % "1.0.7.RELEASE",
       "ch.qos.logback" % "logback-classic" % logbackVersion,
+      // Structured JSON logging (constellation observability / Loki): the `json` appender's encoder.
+      "net.logstash.logback" % "logstash-logback-encoder" % "8.0",
       // test
       "org.apache.pekko" %% "pekko-actor-testkit-typed" % pekkoVersion % Test,
       "org.apache.pekko" %% "pekko-persistence-testkit" % pekkoVersion % Test,
