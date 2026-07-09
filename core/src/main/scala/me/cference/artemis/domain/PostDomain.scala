@@ -33,6 +33,7 @@ object PostDomain:
           case _: CreatePost => Left(DomainError.PostAlreadyExists)
           case RecordProcessed(dimensions, derivatives, phash, at) =>
             Right(Seq(MediaProcessed(dimensions, derivatives, phash, at)))
+          case MarkFailed(reason, at) => Right(Seq(ProcessingFailed(reason, at)))
           case Restore(_) => Right(Seq.empty) // already live: no-op
           // A pending post has no processed media, so the media/content-carrying `Deleted`
           // tombstone can't represent it — and content edits need processed media anyway.
@@ -80,10 +81,23 @@ object PostDomain:
           case SetSource(source, at) =>
             Right(Seq(SourceChanged(source, at)))
 
+          case _: MarkFailed =>
+            // Only a pending post can fail processing; an already-active post cannot.
+            Left(DomainError.PostNotFound)
+
       case _: Deleted =>
         command match
           case Restore(at) => Right(Seq(PostRestored(at)))
           // Tombstone: every other command on a deleted post is rejected.
+          case _ => Left(DomainError.PostNotFound)
+
+      case _: Failed =>
+        command match
+          // Idempotent: re-marking an already-failed post is an accepted no-op, so an at-least-once
+          // redelivery of `MediaFailed` never surfaces a spurious rejection — the terminal
+          // transition is idempotent in the domain, not merely behind a dedup guard.
+          case _: MarkFailed => Right(Seq.empty)
+          // Otherwise terminal: a failed post rejects every command.
           case _ => Left(DomainError.PostNotFound)
 
   def evolve(state: PostState, event: PostEvent): PostState =
@@ -93,6 +107,9 @@ object PostDomain:
 
       case (Pending(id, md5, filetype), MediaProcessed(dimensions, derivatives, phash, _)) =>
         Active(id, PostMedia(md5, filetype, dimensions, derivatives, phash), PostContent.empty)
+
+      case (Pending(id, md5, filetype), ProcessingFailed(reason, _)) =>
+        Failed(id, md5, filetype, reason)
 
       case (Active(id, media, content), MediaProcessed(dimensions, derivatives, phash, _)) =>
         // Reprocessing an already-active post refreshes its media facts, keeps its content.

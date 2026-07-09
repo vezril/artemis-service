@@ -46,6 +46,24 @@ object PostJson:
           duration = None
         )
 
+      case PostState.Failed(pid, md5, filetype, _) =>
+        // Terminal processing failure: no media facts, surfaced as status "failed".
+        PostResponse(
+          id = pid.value,
+          status = "failed",
+          tags = Nil,
+          rating = None,
+          score = 0,
+          favorited = false,
+          parent = None,
+          source = None,
+          md5 = Some(md5.value),
+          filetype = Some(filetype.value),
+          width = None,
+          height = None,
+          duration = None
+        )
+
       case PostState.Active(pid, media, content) =>
         active(pid.value, "active", media, content)
 

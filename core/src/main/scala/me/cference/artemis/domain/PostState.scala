@@ -5,13 +5,15 @@ package me.cference.artemis.domain
  * Active -> Deleted`; `Deleted` is a terminal tombstone (only `Restore` can leave it). `Pending` is
  * a created-but-not-yet-processed post; `RecordProcessed` promotes it to `Active`, carrying the
  * derived media facts and the mutable content (tags, rating, relationships, favorites, score,
- * source) that later commands edit.
+ * source) that later commands edit. A pending post whose processing fails (`MarkFailed`) folds to
+ * `Failed`, a terminal state that rejects every command.
  */
 enum PostState:
   case Empty
   case Pending(id: PostId, md5: Md5, filetype: Filetype)
   case Active(id: PostId, media: PostMedia, content: PostContent)
   case Deleted(id: PostId, media: PostMedia, content: PostContent)
+  case Failed(id: PostId, md5: Md5, filetype: Filetype, reason: String)
 
 object PostState:
   val initial: PostState = Empty

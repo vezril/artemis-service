@@ -21,6 +21,9 @@ object PostEvent:
       at: Instant
   ) extends PostEvent
 
+  /** Processing failed terminally for a pending post; `reason` is the human-readable cause. */
+  final case class ProcessingFailed(reason: String, at: Instant) extends PostEvent
+
   final case class PostDeleted(at: Instant) extends PostEvent
   final case class PostRestored(at: Instant) extends PostEvent
 

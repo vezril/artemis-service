@@ -96,9 +96,7 @@ lazy val server = (project in file("server"))
       .toSeq,
     credentials ++= sys.env
       .get("GITHUB_TOKEN")
-      .map(token =>
-        Credentials("GitHub Package Registry", "maven.pkg.github.com", "vezril", token)
-      )
+      .map(token => Credentials("GitHub Package Registry", "maven.pkg.github.com", "vezril", token))
       .toSeq,
     libraryDependencies ++= Seq(
       "org.apache.pekko" %% "pekko-actor-typed" % pekkoVersion,

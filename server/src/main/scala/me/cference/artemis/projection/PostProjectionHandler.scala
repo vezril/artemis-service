@@ -35,6 +35,7 @@ final class PostProjectionHandler(repo: ReadModelRepository)(using ec: Execution
           derivativesJson(e.derivatives),
           "active"
         )
+      case _: ProcessingFailed => repo.setStatus(id, "failed")
       case e: TagsChanged => repo.setTags(id, e.tags.map(_.value).toSeq)
       case e: RatingChanged => repo.setRating(id, e.rating.code)
       case e: ParentSet => repo.setParent(id, e.parent.value)
