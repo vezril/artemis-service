@@ -35,10 +35,12 @@ pure domain → projections → ingest → API → media gateway.
            column (rebuildable). Pure per-byte `PerceptualHash.hamming`; `NearDuplicates` port +
            `ReadModelNearDuplicates` (closest match ≤ threshold, self-excluded); wired post-activation
            in the consumer as a best-effort warning (a detection outage never blocks ingest). -->
-- [~] 4.4 (impl) Apollo gRPC client (streaming), HermesMQ publish/consume wiring
-      <!-- Apollo gRPC client DONE (adopt-lexicon-contracts: `ApolloObjectClient`/`ApolloObjectUploader`).
-           Publish/consume LOGIC built behind ports (`MediaJobPublisher`/`ProcessedJobs`). The concrete
-           `lexicon-hermes-grpc` adapter is deferred until that contract cuts a clean release. -->
+- [x] 4.4 (impl) Apollo gRPC client (streaming), HermesMQ publish/consume wiring
+      <!-- Apollo gRPC client (adopt-lexicon-contracts) + concrete Hermes transport: pinned lexicon
+           bumped 0.3.0→0.5.0 (+ `lexicon-hermes-grpc`); `HermesMediaJobPublisher` (Publish to
+           media.process) + `HermesMediaResultConsumer.pollOnce` (Pull→decode→handler→Ack, ack only on
+           success, poison/handler-failure left un-acked). Tested vs an in-process Hermes double.
+           The runnable app `Main`/continuous poll-loop + durable `ProcessedJobs` are M9 cross-cutting. -->
 
 ## 5. Catalog API + media gateway
 
