@@ -10,10 +10,10 @@ Dependency order: tag relationships → DSL parse (pure) → resolve/plan → SQ
 
 ## 1. Tag relationships & categories (roadmap M2)
 
-- [ ] 1.1 (test) `TagCategory` enum (general 0, artist 1, copyright 3, character 4, meta 5); invalid value rejected
-- [ ] 1.2 (impl) DDL: `tag_aliases(antecedent, consequent)`, `tag_implications(antecedent, consequent)` + a precomputed transitive-closure representation; `tags.category` already present
-- [ ] 1.3 (test) `TagGraphRepository` loads a `TagGraph` (aliases + transitively-closed implications) from the tables; alias chains resolve to a terminal; implication cycles terminate
-- [ ] 1.4 (test) write-path canonicalization uses the DB-loaded `TagGraph` (wire the `Post` entity's graph from the repo instead of `TagGraph.empty`), preserving the alias→implication→dedup ordering
+- [x] 1.1 (test) `TagCategory` enum (general 0, artist 1, copyright 3, character 4, meta 5); invalid value rejected
+- [x] 1.2 (impl) DDL: `tag_aliases`, `tag_implications` (DIRECT edges; transitive closure stays in the reused pure `TagCanonicalization`); `tags.category` already present
+- [x] 1.3 (test) `TagGraphRepository.loadGraph` loads a `TagGraph` from the tables (multi-consequent implications unioned); transitive canonicalize, alias chain→terminal, cycle-termination — testcontainers IT
+- [x] 1.4 (test) write-path canonicalization uses the DB-loaded `TagGraph` — `PostEntity` given a defaulted `() => TagGraph` supplier read per command (never on replay); cache/refresh loop deferred to M9
 
 ## 2. Search DSL — tokenize & parse (pure `core`)
 
@@ -28,10 +28,10 @@ Dependency order: tag relationships → DSL parse (pure) → resolve/plan → SQ
 
 ## 3. Search DSL — resolve & plan
 
-- [ ] 3.1 (test) search-time alias resolution: query tag terms are rewritten through the `TagGraph` (aliases apply to the query, not only stored tags)
-- [ ] 3.2 (test) wildcard expansion: `cat_*` expands via the `tags` trigram index to concrete tags, folded into an OR, **capped** top-N by `post_count`; an over-broad wildcard is rejected ("refine your search")
-- [ ] 3.3 (test) query plan `{includes, excludes, orSet, predicates, order, limit, cursor}` derived from the resolved AST
-- [ ] 3.4 (impl) the resolver + planner (consumes `TagGraph` + a wildcard lookup port)
+- [x] 3.1 (test) search-time alias resolution: query tag terms are rewritten through the `TagGraph` (aliases apply to the query, not only stored tags)
+- [x] 3.2 (test) wildcard expansion: `cat_*` expands via the `tags` trigram index to concrete tags, folded into an OR, **capped** top-N by `post_count`; an over-broad wildcard is rejected ("refine your search")
+- [x] 3.3 (test) query plan `{includes, excludes, orSet, predicates, order, limit, cursor}` derived from the resolved AST
+- [x] 3.4 (impl) the resolver + planner (consumes `TagGraph` + a wildcard lookup port)
 
 ## 4. Search DSL — compile to SQL & execute (`server`)
 

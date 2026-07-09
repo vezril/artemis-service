@@ -294,6 +294,21 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
       )
     }.map(_.headOption)
 
+  /**
+   * Names in the trigram-indexed `tags` table matching a SQL `LIKE` pattern, most-populated first.
+   * Backs query-time wildcard expansion (search-dsl 3.2): the caller passes an already-escaped
+   * pattern (literal `_`/`%` escaped, `*`→`%`) and a `limit` of `cap + 1`, so an over-broad pattern
+   * surfaces as one row beyond the cap rather than a full-table scan. `name` tiebreaks the ordering
+   * for determinism.
+   */
+  def matchTagNames(likePattern: String, limit: Int): Future[Seq[String]] =
+    query(
+      """SELECT name FROM tags WHERE name LIKE $1 ESCAPE '\'
+        |ORDER BY post_count DESC, name ASC
+        |LIMIT $2""".stripMargin,
+      _.bind(0, likePattern).bind(1, Integer.valueOf(limit))
+    )(row => row.get("name", classOf[String]))
+
   def tagPostCount(name: String): Future[Int] =
     query("SELECT post_count FROM tags WHERE name = $1", _.bind(0, name)) { row =>
       row.get("post_count", classOf[Integer]).intValue
