@@ -303,4 +303,45 @@ final class PostProjectionIT
         }
       }
     }
+
+    "project PossibleDuplicateFlagged into the duplicate_of column (4.3)" in {
+      val existing = PostId.unsafe("dup-existing")
+      val target = PostId.unsafe("dup-target")
+      send(existing, CreatePost(existing, md5, filetype, now))
+      send(existing, RecordProcessed(dimensions, derivatives, phash, now))
+      send(target, CreatePost(target, md5, filetype, now))
+      send(target, RecordProcessed(dimensions, derivatives, phash, now))
+      send(target, FlagPossibleDuplicate(existing, now))
+
+      runProjection {
+        eventually {
+          val row =
+            repo.getPost("dup-target").futureValue.getOrElse(fail("dup-target not projected"))
+          row.duplicateOf shouldBe Some("dup-existing")
+        }
+      }
+    }
+
+    "expose active posts' phashes for detection, excluding self and non-active (4.3)" in {
+      val a = PostId.unsafe("aph-a")
+      val b = PostId.unsafe("aph-b")
+      val stillPending = PostId.unsafe("aph-pending")
+      send(a, CreatePost(a, md5, filetype, now))
+      send(a, RecordProcessed(dimensions, derivatives, Phash("aaaa"), now))
+      send(b, CreatePost(b, md5, filetype, now))
+      send(b, RecordProcessed(dimensions, derivatives, Phash("bbbb"), now))
+      send(stillPending, CreatePost(stillPending, md5, filetype, now)) // pending: phash NULL
+
+      runProjection {
+        eventually {
+          repo.getPost("aph-a").futureValue.map(_.status) shouldBe Some("active")
+          repo.getPost("aph-b").futureValue.map(_.status) shouldBe Some("active")
+        }
+      }
+
+      val excludingA = repo.activePhashes("aph-a").futureValue
+      excludingA should contain("aph-b" -> "bbbb")
+      excludingA.map(_._1) should not contain "aph-a" // self excluded
+      excludingA.map(_._1) should not contain "aph-pending" // non-active / no phash excluded
+    }
   }

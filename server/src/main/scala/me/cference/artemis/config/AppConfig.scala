@@ -30,6 +30,13 @@ final case class ApolloConfig(
     useTls: Boolean
 )
 
+/**
+ * Post-processing near-duplicate detection knob. `hammingThreshold` is the maximum bit-difference
+ * between two phashes for the newer post to be flagged a possible duplicate of the older. Read from
+ * `artemis.dedup`, env-overridable.
+ */
+final case class DedupConfig(hammingThreshold: Int)
+
 object AppConfig:
 
   def postgres(config: Config): PostgresConfig =
@@ -50,3 +57,6 @@ object AppConfig:
       port = ac.getInt("port"),
       useTls = ac.getBoolean("tls")
     )
+
+  def dedup(config: Config): DedupConfig =
+    DedupConfig(hammingThreshold = config.getInt("artemis.dedup.hamming-threshold"))

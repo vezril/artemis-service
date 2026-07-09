@@ -81,6 +81,12 @@ object PostDomain:
           case SetSource(source, at) =>
             Right(Seq(SourceChanged(source, at)))
 
+          case FlagPossibleDuplicate(matchedId, at) =>
+            // Idempotent: re-flagging with the same matched id emits nothing; a different match
+            // re-flags (post-processing found a nearer/other existing post).
+            if content.duplicateOf.contains(matchedId) then Right(Seq.empty)
+            else Right(Seq(PossibleDuplicateFlagged(matchedId, at)))
+
           case _: MarkFailed =>
             // Only a pending post can fail processing; an already-active post cannot.
             Left(DomainError.PostNotFound)
@@ -145,6 +151,9 @@ object PostDomain:
 
       case (Active(id, media, content), SourceChanged(source, _)) =>
         Active(id, media, content.copy(source = Some(source)))
+
+      case (Active(id, media, content), PossibleDuplicateFlagged(matchedId, _)) =>
+        Active(id, media, content.copy(duplicateOf = Some(matchedId)))
 
       // No other (state, event) pair is producible by `decide`; keep total.
       case (current, _) => current

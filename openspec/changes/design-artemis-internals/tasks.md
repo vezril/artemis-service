@@ -30,9 +30,11 @@ pure domain → projections → ingest → API → media gateway.
 - [x] 4.2 (test) consume `MediaProcessed`→active / `MediaFailed`→failed; idempotent per `jobId`
       <!-- `MediaResultHandler` + `failed`-state domain extension (MarkFailed→ProcessingFailed→Failed,
            idempotent in the domain); dedup via `ProcessedJobs` port is an optimization on top. -->
-- [ ] 4.3 (test) post-processing phash dup flag (Hamming threshold); unique → no flag
-      <!-- DEFERRED to its own pass — needs a dup-flag domain event (PossibleDuplicateFlagged) +
-           projection column + Hamming detection, to stay rebuildable/event-sourced. -->
+- [x] 4.3 (test) post-processing phash dup flag (Hamming threshold); unique → no flag
+      <!-- Event-sourced: FlagPossibleDuplicate→PossibleDuplicateFlagged→`duplicate_of` projection
+           column (rebuildable). Pure per-byte `PerceptualHash.hamming`; `NearDuplicates` port +
+           `ReadModelNearDuplicates` (closest match ≤ threshold, self-excluded); wired post-activation
+           in the consumer as a best-effort warning (a detection outage never blocks ingest). -->
 - [~] 4.4 (impl) Apollo gRPC client (streaming), HermesMQ publish/consume wiring
       <!-- Apollo gRPC client DONE (adopt-lexicon-contracts: `ApolloObjectClient`/`ApolloObjectUploader`).
            Publish/consume LOGIC built behind ports (`MediaJobPublisher`/`ProcessedJobs`). The concrete
