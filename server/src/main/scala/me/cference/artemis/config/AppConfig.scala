@@ -19,6 +19,17 @@ final case class PostgresConfig(
     connectTimeout: FiniteDuration
 )
 
+/**
+ * Coordinates for the Apollo object store's gRPC endpoint, consumed by
+ * [[me.cference.artemis.grpc.ApolloObjectClient]]. Read from `artemis.apollo`; every value is
+ * env-overridable in `application.conf` so no endpoint is hard-coded in the client.
+ */
+final case class ApolloConfig(
+    host: String,
+    port: Int,
+    useTls: Boolean
+)
+
 object AppConfig:
 
   def postgres(config: Config): PostgresConfig =
@@ -30,4 +41,12 @@ object AppConfig:
       user = cf.getString("user"),
       password = cf.getString("password"),
       connectTimeout = cf.getDuration("connect-timeout").toMillis.millis
+    )
+
+  def apollo(config: Config): ApolloConfig =
+    val ac = config.getConfig("artemis.apollo")
+    ApolloConfig(
+      host = ac.getString("host"),
+      port = ac.getInt("port"),
+      useTls = ac.getBoolean("tls")
     )

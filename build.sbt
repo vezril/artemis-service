@@ -41,6 +41,11 @@ lazy val pekkoVersion = "1.2.0"
 lazy val pekkoR2dbcVersion = "1.1.0"
 lazy val pekkoProjectionVersion = "1.1.0"
 lazy val scalaTestVersion = "3.2.19"
+// Shared Codex wire contracts (the-lexicon): the Apollo gRPC client stubs and the
+// codex.messages.v1 async messages. Pinned to a clean tagged release; consumed as
+// published jars (no Apollo/object_api codegen runs here). Resolved from GitHub
+// Packages in CI, or `~/.ivy2/local` after `sbt publishLocal` in the-lexicon.
+lazy val lexiconVersion = "0.3.0"
 lazy val testcontainersVersion = "0.41.4"
 lazy val logbackVersion = "1.5.12"
 
@@ -81,9 +86,26 @@ lazy val server = (project in file("server"))
     // journal schema via `Source.fromResource` (the runtime r2dbc plugin does not
     // auto-create tables). Matches the sibling services' test-resource approach.
     Test / unmanagedResourceDirectories += (ThisBuild / baseDirectory).value / "ddl",
+    // Shared-contract resolver: GitHub Packages for the-lexicon jars. Added only when a
+    // GITHUB_TOKEN is present (CI/authorized dev); otherwise the pinned versions resolve
+    // from `~/.ivy2/local` after `sbt publishLocal` in the-lexicon (the documented fallback).
+    // No credentials are committed.
+    resolvers ++= sys.env
+      .get("GITHUB_TOKEN")
+      .map(_ => "Lexicon GitHub Packages".at("https://maven.pkg.github.com/vezril/the-lexicon"))
+      .toSeq,
+    credentials ++= sys.env
+      .get("GITHUB_TOKEN")
+      .map(token =>
+        Credentials("GitHub Package Registry", "maven.pkg.github.com", "vezril", token)
+      )
+      .toSeq,
     libraryDependencies ++= Seq(
       "org.apache.pekko" %% "pekko-actor-typed" % pekkoVersion,
       "org.apache.pekko" %% "pekko-stream" % pekkoVersion,
+      // Shared Codex wire contracts (the-lexicon): Apollo gRPC client + async messages.
+      "io.codex" %% "lexicon-grpc" % lexiconVersion,
+      "io.codex" %% "lexicon-messages" % lexiconVersion,
       // Catalog REST/JSON API (roadmap M6/M7).
       "org.apache.pekko" %% "pekko-http" % pekkoVersion,
       "org.apache.pekko" %% "pekko-http-spray-json" % pekkoVersion,
