@@ -38,7 +38,7 @@
 - [x] 4.1 Local gate green: compile under the cranked flags, `scalafixAll --check`,
       `clean coverage test coverageAggregate` (report produced), and the full test suite
       (core 131 + server; the `PostProjectionIT` cross-suite flake passes isolated).
-- [ ] 4.2 (owner action — cannot be done from code) Set repo secrets so CI/publish go green:
-      `LEXICON_TOKEN` (read:packages PAT — required for every sbt job to resolve deps),
-      `DOCKERHUB_USERNAME` + `DOCKERHUB_TOKEN` (dev/release publish + Trivy). Document in the PR.
+- [x] 4.2 (owner action) Set repo secrets so CI/publish go green: `LEXICON_TOKEN` (read:packages PAT),
+      `DOCKERHUB_USERNAME` + `DOCKERHUB_TOKEN`. DONE — secrets set 2026-07-10; CI re-run went green
+      (all 5 jobs), and branch protection now requires them on `development` + `main`.
 - [ ] 4.3 (deferred) Add a `coverageMinimumStmtTotal` floor once the suite is judged mature.
