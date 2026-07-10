@@ -11,7 +11,7 @@ import io.r2dbc.spi.{
 }
 import reactor.core.publisher.{Flux, Mono}
 
-import java.time.{Instant, ZoneOffset}
+import java.time.{Instant, OffsetDateTime, ZoneOffset}
 import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.jdk.CollectionConverters.*
 
@@ -30,7 +30,8 @@ final case class PostRow(
     height: Option[Int],
     duration: Option[Long],
     parentId: Option[String],
-    duplicateOf: Option[String]
+    duplicateOf: Option[String],
+    createdAt: Instant
 )
 
 /**
@@ -40,6 +41,12 @@ final case class PostRow(
  * idempotent under at-least-once redelivery: upserts keyed by id, absolute `score`/`fav_count`,
  * read-current-delta `post_count` maintenance, and status-guarded delete/restore count adjustments.
  */
+object ReadModelRepository:
+  /** The `posts` columns projected into a [[PostRow]] — shared by point reads and DSL search. */
+  val PostColumns: String =
+    "id, tags, status, score, fav_count, rating, width, height, duration, parent_id, " +
+      "duplicate_of, created_at"
+
 final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext):
 
   private val factory: ConnectionFactory =
@@ -274,25 +281,33 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
 
   def getPost(id: String): Future[Option[PostRow]] =
     query(
-      """SELECT id, tags, status, score, fav_count, rating, width, height, duration, parent_id,
-        |       duplicate_of
-        |FROM posts WHERE id = $1""".stripMargin,
+      s"SELECT ${ReadModelRepository.PostColumns} FROM posts WHERE id = $$1",
       _.bind(0, id)
-    ) { row =>
-      PostRow(
-        id = row.get("id", classOf[String]),
-        tags = Option(row.get("tags", classOf[Array[String]])).map(_.toSeq).getOrElse(Seq.empty),
-        status = row.get("status", classOf[String]),
-        score = row.get("score", classOf[Integer]).intValue,
-        favCount = row.get("fav_count", classOf[Integer]).intValue,
-        rating = Option(row.get("rating", classOf[String])),
-        width = Option(row.get("width", classOf[Integer])).map(_.intValue),
-        height = Option(row.get("height", classOf[Integer])).map(_.intValue),
-        duration = Option(row.get("duration", classOf[java.lang.Long])).map(_.longValue),
-        parentId = Option(row.get("parent_id", classOf[String])),
-        duplicateOf = Option(row.get("duplicate_of", classOf[String]))
-      )
-    }.map(_.headOption)
+    )(mapPostRow).map(_.headOption)
+
+  /**
+   * Run a pre-compiled search SQL (from `SqlCompiler`) with its bound params applied by `bind`, and
+   * map each row to a [[PostRow]]. The r2dbc plumbing (short-lived connection, row mapping) is
+   * reused; the caller owns the SQL and the parameter binding so this stays search-agnostic.
+   */
+  def selectPostRows(sql: String, bind: Statement => Statement): Future[Seq[PostRow]] =
+    query(sql, bind)(mapPostRow)
+
+  private def mapPostRow(row: Row): PostRow =
+    PostRow(
+      id = row.get("id", classOf[String]),
+      tags = Option(row.get("tags", classOf[Array[String]])).map(_.toSeq).getOrElse(Seq.empty),
+      status = row.get("status", classOf[String]),
+      score = row.get("score", classOf[Integer]).intValue,
+      favCount = row.get("fav_count", classOf[Integer]).intValue,
+      rating = Option(row.get("rating", classOf[String])),
+      width = Option(row.get("width", classOf[Integer])).map(_.intValue),
+      height = Option(row.get("height", classOf[Integer])).map(_.intValue),
+      duration = Option(row.get("duration", classOf[java.lang.Long])).map(_.longValue),
+      parentId = Option(row.get("parent_id", classOf[String])),
+      duplicateOf = Option(row.get("duplicate_of", classOf[String])),
+      createdAt = row.get("created_at", classOf[OffsetDateTime]).toInstant
+    )
 
   /**
    * Names in the trigram-indexed `tags` table matching a SQL `LIKE` pattern, most-populated first.
