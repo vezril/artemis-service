@@ -209,6 +209,13 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
       (row.get("id", classOf[String]), row.get("phash", classOf[String]))
     }
 
+  /** A post's perceptual hash, if it has one (a pending/failed/absent post has none). */
+  def phashOf(id: String): Future[Option[String]] =
+    query(
+      "SELECT phash FROM posts WHERE id = $1 AND phash IS NOT NULL AND phash <> ''",
+      _.bind(0, id)
+    )(row => row.get("phash", classOf[String])).map(_.headOption)
+
   /** Set the score absolutely (the `Scored` event carries the total) — a pure idempotent upsert. */
   def setScore(id: String, score: Int): Future[Unit] =
     update(

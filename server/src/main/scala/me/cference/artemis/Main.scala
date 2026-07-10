@@ -14,6 +14,7 @@ import me.cference.artemis.http.{
   RelatedTagsRoutes,
   SavedSearchRoutes,
   SearchRoutes,
+  SimilarityRoutes,
   UploadRoutes
 }
 import me.cference.artemis.ingest.{
@@ -38,6 +39,7 @@ import me.cference.artemis.search.{
   SearchExecutor,
   SearchService
 }
+import me.cference.artemis.similarity.SimilarityService
 import me.cference.artemis.tags.{TagGraphCache, TagGraphRepository}
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
@@ -154,6 +156,9 @@ object Main:
     val uploadRoutes = UploadRoutes(uploadService.upload)
     val savedSearchRoutes = SavedSearchRoutes(savedSearchesRef, searchService.search)
     val relatedTagsRoutes = RelatedTagsRoutes(readModel.relatedTags)
+    val similarityService = new SimilarityService(readModel)
+    val similarityRoutes =
+      SimilarityRoutes(similarityService.similarTo, similarityService.reverseLookup)
     val apiRoutes: Route =
       HealthRoutes(BuildInfo.version, () => readiness.get()) ~
         MetricsRoutes(metrics) ~
@@ -162,7 +167,8 @@ object Main:
         mediaRoutes.routes ~
         uploadRoutes.routes ~
         savedSearchRoutes.routes ~
-        relatedTagsRoutes.routes
+        relatedTagsRoutes.routes ~
+        similarityRoutes.routes
 
     HttpServer.bind(apiRoutes, httpCfg.host, httpCfg.port).onComplete {
       case Success(binding) =>
