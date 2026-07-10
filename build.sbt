@@ -40,6 +40,8 @@ ThisBuild / scalacOptions ++= Seq(
 lazy val pekkoVersion = "1.2.0"
 lazy val pekkoR2dbcVersion = "1.1.0"
 lazy val pekkoProjectionVersion = "1.1.0"
+lazy val pekkoManagementVersion = "1.2.1"
+lazy val prometheusVersion = "0.16.0"
 lazy val scalaTestVersion = "3.2.19"
 // Shared Codex wire contracts (the-lexicon): the Apollo gRPC client stubs and the
 // codex.messages.v1 async messages. Pinned to a clean tagged release; consumed as
@@ -74,14 +76,23 @@ lazy val core = (project in file("core"))
     )
   )
 
-// --- server: Pekko runtime + persistence (roadmap M3). --------------------
-// Event-sourced entities on the PostgreSQL r2dbc journal. HTTP/gRPC/projections
-// land in later milestones (M4+); this module is the durable write side.
+// --- server: Pekko runtime + persistence + projections + HTTP API. --------
+// Event-sourced entities on the PostgreSQL r2dbc journal, read-model projections,
+// the async media spine, and the HTTP API — assembled into a runnable, Dockerized
+// service by `me.cference.artemis.Main` (roadmap M9).
 lazy val server = (project in file("server"))
   .dependsOn(core)
+  .enablePlugins(JavaAppPackaging, DockerPlugin, BuildInfoPlugin)
   .settings(commonSettings)
   .settings(
     name := "artemis-server",
+    Compile / mainClass := Some("me.cference.artemis.Main"),
+    // Fork `run` so the forked JVM stays alive on the ActorSystem's non-daemon threads
+    // (an un-forked `sbt run` reaps the JVM the moment `main` returns from the async bind,
+    // before the readiness gate resolves). The packaged image runs the main class directly,
+    // where this is moot.
+    Compile / run / fork := true,
+    Compile / run / connectInput := true,
     // Put the repo-root `ddl/` on the test classpath so integration tests apply the
     // journal schema via `Source.fromResource` (the runtime r2dbc plugin does not
     // auto-create tables). Matches the sibling services' test-resource approach.
@@ -101,6 +112,15 @@ lazy val server = (project in file("server"))
     libraryDependencies ++= Seq(
       "org.apache.pekko" %% "pekko-actor-typed" % pekkoVersion,
       "org.apache.pekko" %% "pekko-stream" % pekkoVersion,
+      // Clustering (service-runtime spec): membership, sharded entities (single writer
+      // per id), split-brain resolution, and config-discovery cluster formation.
+      "org.apache.pekko" %% "pekko-cluster-typed" % pekkoVersion,
+      "org.apache.pekko" %% "pekko-cluster-sharding-typed" % pekkoVersion,
+      "org.apache.pekko" %% "pekko-management-cluster-bootstrap" % pekkoManagementVersion,
+      "org.apache.pekko" %% "pekko-management-cluster-http" % pekkoManagementVersion,
+      // Align pekko-discovery (pulled transitively by management/grpc) with pekkoVersion;
+      // Pekko forbids a mixed-artifact-version classpath.
+      "org.apache.pekko" %% "pekko-discovery" % pekkoVersion,
       // Shared Codex wire contracts (the-lexicon): Apollo gRPC client, async messages, and the
       // HermesMQ PubSub gRPC client (the media-job transport).
       "io.codex" %% "lexicon-grpc" % lexiconVersion,
@@ -117,6 +137,11 @@ lazy val server = (project in file("server"))
       "org.apache.pekko" %% "pekko-projection-eventsourced" % pekkoProjectionVersion,
       // Postgres r2dbc driver (explicit since r2dbc 1.1.0).
       "org.postgresql" % "r2dbc-postgresql" % "1.0.7.RELEASE",
+      // Prometheus metrics (service-metrics spec): app CollectorRegistry, JVM collectors,
+      // text exposition — mirrors the sibling services' /metrics surface.
+      "io.prometheus" % "simpleclient" % prometheusVersion,
+      "io.prometheus" % "simpleclient_hotspot" % prometheusVersion,
+      "io.prometheus" % "simpleclient_common" % prometheusVersion,
       "ch.qos.logback" % "logback-classic" % logbackVersion,
       // Structured JSON logging (constellation observability / Loki): the `json` appender's encoder.
       "net.logstash.logback" % "logstash-logback-encoder" % "8.0",
@@ -129,5 +154,32 @@ lazy val server = (project in file("server"))
       "com.dimafeng" %% "testcontainers-scala-postgresql" % testcontainersVersion % Test,
       // JDBC driver used by tests to apply DDL and assert journal rows.
       "org.postgresql" % "postgresql" % "42.7.4" % Test
+    ),
+    // BuildInfo exposes the dynver version to the running app (health endpoint reports it).
+    buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
+    buildInfoPackage := "me.cference.artemis.build",
+    buildInfoOptions += BuildInfoOption.ToJson,
+    // --- Docker (sbt-native-packager) — service-image spec. ---
+    dockerBaseImage := "eclipse-temurin:21-jre",
+    dockerRepository := sys.env.get("DOCKERHUB_USERNAME"),
+    dockerUpdateLatest := false, // the release workflow controls :latest explicitly
+    Docker / packageName := "artemis",
+    dockerExposedPorts := Seq(8080),
+    // LOG_FORMAT=json is the image default (add-structured-logging); a local run stays text.
+    dockerEnvVars := Map("HTTP_PORT" -> "8080", "LOG_FORMAT" -> "json"),
+    // Non-root user (packager default UID 1001).
+    Docker / daemonUserUid := Some("1001"),
+    Docker / daemonUser := "artemis",
+    // HEALTHCHECK uses bash's /dev/tcp so no extra packages (wget/curl) are needed in the
+    // JRE base image. Exec form keeps the whole script as one arg to `bash -c`; bash
+    // expands the HTTP_PORT override.
+    dockerCommands ++= Seq(
+      com.typesafe.sbt.packager.docker.Cmd(
+        "HEALTHCHECK",
+        "--interval=10s --timeout=3s --start-period=20s --retries=5 CMD " +
+          """["bash","-c","exec 3<>/dev/tcp/127.0.0.1/${HTTP_PORT:-8080}; """ +
+          """printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3; """ +
+          """grep -q '200 OK' <&3"]"""
+      )
     )
   )
