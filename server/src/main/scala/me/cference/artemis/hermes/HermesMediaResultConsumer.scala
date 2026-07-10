@@ -3,7 +3,7 @@ package me.cference.artemis.hermes
 import codex.messages.v1.{MediaFailed, MediaProcessed}
 import me.cference.artemis.ingest.MediaResultHandler
 import me.cference.artemis.messages.MediaMessages
-import me.cference.hermesmq.grpc.{AckRequest, PulledMessage, PullRequest}
+import me.cference.hermesmq.grpc.{AckRequest, PullRequest, PulledMessage}
 import org.slf4j.LoggerFactory
 import scalapb.{GeneratedMessage, GeneratedMessageCompanion}
 

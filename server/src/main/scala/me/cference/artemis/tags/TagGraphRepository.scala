@@ -1,7 +1,5 @@
 package me.cference.artemis.tags
 
-import me.cference.artemis.config.PostgresConfig
-import me.cference.artemis.domain.{Tag, TagGraph}
 import io.r2dbc.spi.{
   Connection,
   ConnectionFactories,
@@ -9,6 +7,8 @@ import io.r2dbc.spi.{
   ConnectionFactoryOptions,
   Row
 }
+import me.cference.artemis.config.PostgresConfig
+import me.cference.artemis.domain.{Tag, TagGraph}
 import reactor.core.publisher.{Flux, Mono}
 
 import scala.concurrent.{ExecutionContext, Future, Promise}
@@ -95,8 +95,10 @@ final class TagGraphRepository(cfg: PostgresConfig)(using ec: ExecutionContext):
   private def toFuture[A](mono: Mono[A]): Future[A] =
     val promise = Promise[A]()
     mono.subscribe(
-      (value: A) => { promise.trySuccess(value); () },
-      (err: Throwable) => { promise.tryFailure(err); () },
-      () => { promise.trySuccess(null.asInstanceOf[A]); () }
+      (value: A) => { val _ = promise.trySuccess(value) },
+      (err: Throwable) => { val _ = promise.tryFailure(err) },
+      () => {
+        val _ = promise.trySuccess(null.asInstanceOf[A])
+      } // scalafix:ok DisableSyntax.null
     )
     promise.future

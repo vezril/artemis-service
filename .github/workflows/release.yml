@@ -1,0 +1,96 @@
+name: Release
+
+# Publishes a Docker image to Docker Hub when a semver tag vX.Y.Z is pushed on main. The tag
+# pattern below is the first gate: malformed tags (e.g. release-1.2 or v1.2) never trigger this.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+env:
+  IMAGE_NAME: artemis
+  # read:packages PAT to resolve the Lexicon jars from GitHub Packages (see ci.yml).
+  LEXICON_TOKEN: ${{ secrets.LEXICON_TOKEN }}
+
+jobs:
+  release:
+    name: Test, scan, build, and publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for dynver + ancestry check
+
+      # A tag must sit on main to release (prevents releasing a feature branch).
+      - name: Verify tag is on main
+        run: |
+          git fetch origin main
+          if git merge-base --is-ancestor "${{ github.sha }}" origin/main; then
+            echo "OK: ${{ github.ref_name }} is an ancestor of main"
+          else
+            echo "ERROR: tag ${{ github.ref_name }} is not on main — refusing to release"
+            exit 1
+          fi
+
+      # Fail before any build/push if credentials are absent (no partial publish).
+      - name: Ensure Docker Hub credentials are present
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "$DOCKERHUB_USERNAME" ] || [ -z "$DOCKERHUB_TOKEN" ]; then
+            echo "ERROR: DOCKERHUB_USERNAME / DOCKERHUB_TOKEN secret is missing"
+            exit 1
+          fi
+
+      - uses: ./.github/actions/setup-scala
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Semver image tags are immutable — only :latest ever moves.
+      - name: Enforce semver tag immutability
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if docker manifest inspect "$DOCKERHUB_USERNAME/$IMAGE_NAME:$VERSION" >/dev/null 2>&1; then
+            echo "ERROR: $DOCKERHUB_USERNAME/$IMAGE_NAME:$VERSION already exists — semver tags are immutable"
+            exit 1
+          fi
+          echo "OK: $VERSION is not yet published"
+
+      # Nothing is pushed unless the whole suite passes first.
+      - name: Run tests
+        run: sbt -batch test
+
+      - name: Build image
+        run: sbt -batch server/Docker/publishLocal
+
+      # Resolve the local image tag (dynver on a clean tag vX.Y.Z == X.Y.Z) for the scan + push.
+      - name: Resolve release version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      # Image CVE scan (static-analysis): scan the built image before it is pushed and fail the
+      # release on CRITICAL/HIGH vulnerabilities so a known-vulnerable image never ships.
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: "${{ env.IMAGE_NAME }}:${{ env.VERSION }}"
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Tag and push X.Y.Z + latest
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          LOCAL="$IMAGE_NAME:$VERSION" # $VERSION exported above
+          for TARGET in "$DOCKERHUB_USERNAME/$IMAGE_NAME:$VERSION" "$DOCKERHUB_USERNAME/$IMAGE_NAME:latest"; do
+            docker tag "$LOCAL" "$TARGET"
+            docker push "$TARGET"
+          done

@@ -1,5 +1,6 @@
 package me.cference.artemis.http
 
+import com.typesafe.config.ConfigFactory
 import me.cference.artemis.domain.*
 import me.cference.artemis.domain.PostCommand.*
 import me.cference.artemis.persistence.{PoolEntity, PostEntity}
@@ -16,7 +17,6 @@ import org.apache.pekko.persistence.testkit.{
   PersistenceTestKitSnapshotPlugin
 }
 import org.apache.pekko.util.Timeout
-import com.typesafe.config.ConfigFactory
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec

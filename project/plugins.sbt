@@ -12,3 +12,7 @@ addSbtPlugin("org.scalameta" % "sbt-scalafmt" % "2.5.4")
 
 // Static analysis / linting.
 addSbtPlugin("ch.epfl.scala" % "sbt-scalafix" % "0.13.0")
+
+// Statement coverage reporting in CI (static-analysis). Ungated initially — report only,
+// no `coverageMinimumStmtTotal` floor until the suite matures.
+addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.2.2")

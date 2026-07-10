@@ -1,8 +1,7 @@
 package me.cference.artemis.projection
 
-import me.cference.artemis.domain.Derivative
-import me.cference.artemis.domain.PostEvent
 import me.cference.artemis.domain.PostEvent.*
+import me.cference.artemis.domain.{Derivative, PostEvent}
 import org.apache.pekko.Done
 import org.apache.pekko.persistence.query.typed.EventEnvelope
 import org.apache.pekko.projection.r2dbc.scaladsl.{R2dbcHandler, R2dbcSession}

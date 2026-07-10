@@ -2,13 +2,12 @@ package me.cference.artemis.ingest
 
 import apollostorage.grpc.PutHeader
 import codex.messages.v1.{ObjectRef, ProcessMediaJob}
-import me.cference.artemis.domain.{Filetype, Md5, PostId}
 import me.cference.artemis.domain.PostCommand.CreatePost
+import me.cference.artemis.domain.{Filetype, Md5, PostId}
 import me.cference.artemis.persistence.PostEntity
 import org.apache.pekko.Done
-import org.apache.pekko.actor.typed.ActorSystem
-import org.apache.pekko.actor.typed.RecipientRef
 import org.apache.pekko.actor.typed.scaladsl.AskPattern.*
+import org.apache.pekko.actor.typed.{ActorSystem, RecipientRef}
 import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.util.{ByteString, Timeout}
 

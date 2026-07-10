@@ -1,8 +1,8 @@
 package me.cference.artemis.domain
 
-import me.cference.artemis.domain.PostState.*
 import me.cference.artemis.domain.PostCommand.*
 import me.cference.artemis.domain.PostEvent.*
+import me.cference.artemis.domain.PostState.*
 
 /**
  * Pure state-transition logic for the post aggregate. Two total functions:

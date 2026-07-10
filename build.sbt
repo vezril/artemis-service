@@ -25,8 +25,10 @@ ThisBuild / scalacOptions ++= Seq(
   "-deprecation",
   "-feature",
   "-unchecked",
+  "-Werror", // warnings are build failures (static-analysis)
   "-Wunused:all",
   "-Wvalue-discard",
+  "-Wnonunit-statement",
   // A non-exhaustive match is an error, not a warning: the domain-error→HTTP-status mapping and
   // the `evolve` folds rely on total matches, so a newly-added ADT case must fail the build rather
   // than degrade to a runtime MatchError / masked 500.
@@ -34,6 +36,11 @@ ThisBuild / scalacOptions ++= Seq(
   "-source:3.3",
   "-Yretain-trees"
 )
+
+// SemanticDB so scalafix's semantic rules (DisableSyntax, OrganizeImports) run in CI
+// (`scalafixAll --check`), not just locally.
+ThisBuild / semanticdbEnabled := true
+ThisBuild / semanticdbVersion := scalafixSemanticdb.revision
 
 // Aligned versions so pekko-persistence-r2dbc (which pulls pekko 1.2.x / r2dbc
 // 1.1.x) does not create a mixed-version classpath (Pekko forbids that).
@@ -51,10 +58,22 @@ lazy val lexiconVersion = "0.5.0"
 lazy val testcontainersVersion = "0.41.4"
 lazy val logbackVersion = "1.5.12"
 
+// read:packages token for the-lexicon GitHub Packages resolver: LEXICON_TOKEN (the CI secret,
+// mirroring apollo-storage) preferred, else GITHUB_TOKEN (authorized dev). None ⇒ local ivy fallback.
+lazy val lexiconToken: Option[String] =
+  sys.env
+    .get("LEXICON_TOKEN")
+    .filter(_.nonEmpty)
+    .orElse(sys.env.get("GITHUB_TOKEN").filter(_.nonEmpty))
+
 lazy val commonSettings = Seq(
   Test / fork := true,
   Test / testForkedParallel := false,
-  scalafmtOnCompile := false
+  scalafmtOnCompile := false,
+  // sbt delegates Compile → Test, so the base cranked flags reach test sources. In tests,
+  // -Wnonunit-statement / -Wvalue-discard are noise that fights the ScalaTest DSL (every
+  // `x shouldBe y` returns a discarded `Assertion`), so strip them from Test only.
+  Test / scalacOptions --= Seq("-Wnonunit-statement", "-Wvalue-discard")
 )
 
 lazy val root = (project in file("."))
@@ -97,16 +116,14 @@ lazy val server = (project in file("server"))
     // journal schema via `Source.fromResource` (the runtime r2dbc plugin does not
     // auto-create tables). Matches the sibling services' test-resource approach.
     Test / unmanagedResourceDirectories += (ThisBuild / baseDirectory).value / "ddl",
-    // Shared-contract resolver: GitHub Packages for the-lexicon jars. Added only when a
-    // GITHUB_TOKEN is present (CI/authorized dev); otherwise the pinned versions resolve
-    // from `~/.ivy2/local` after `sbt publishLocal` in the-lexicon (the documented fallback).
-    // No credentials are committed.
-    resolvers ++= sys.env
-      .get("GITHUB_TOKEN")
+    // Shared-contract resolver: GitHub Packages for the-lexicon jars. Added only when a token is
+    // present — LEXICON_TOKEN (a read:packages PAT, the CI secret, mirroring apollo-storage) or
+    // GITHUB_TOKEN (authorized dev). Absent a token, the pinned versions resolve from `~/.ivy2/local`
+    // after `sbt publishLocal` in the-lexicon (the documented local fallback). No credentials committed.
+    resolvers ++= lexiconToken
       .map(_ => "Lexicon GitHub Packages".at("https://maven.pkg.github.com/vezril/the-lexicon"))
       .toSeq,
-    credentials ++= sys.env
-      .get("GITHUB_TOKEN")
+    credentials ++= lexiconToken
       .map(token => Credentials("GitHub Package Registry", "maven.pkg.github.com", "vezril", token))
       .toSeq,
     libraryDependencies ++= Seq(

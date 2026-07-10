@@ -1,10 +1,10 @@
 package me.cference.artemis.http
 
+import com.typesafe.config.ConfigFactory
 import me.cference.artemis.metrics.MetricsRegistry
 import org.apache.pekko.http.scaladsl.model.StatusCodes
 import org.apache.pekko.http.scaladsl.server.Route
 import org.apache.pekko.http.scaladsl.testkit.ScalatestRouteTest
-import com.typesafe.config.ConfigFactory
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 

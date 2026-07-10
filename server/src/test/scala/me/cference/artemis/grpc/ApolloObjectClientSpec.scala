@@ -6,11 +6,11 @@ import com.typesafe.config.ConfigFactory
 import io.grpc.{Status, StatusRuntimeException}
 import me.cference.artemis.config.{ApolloConfig, AppConfig}
 import org.apache.pekko.NotUsed
+import org.apache.pekko.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 import org.apache.pekko.grpc.scaladsl.Metadata
 import org.apache.pekko.http.scaladsl.Http
 import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.util.ByteString
-import org.apache.pekko.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.time.{Millis, Seconds, Span}
@@ -62,7 +62,7 @@ final class ApolloObjectClientSpec
     "be constructed from an ApolloConfig with no hard-coded endpoint" in {
       // Uses the generated stub from the jar; compiling this at all proves it is on the classpath.
       val client = new ApolloObjectClient(ApolloConfig("localhost", 65535, useTls = false))
-      client should not be null
+      client should not be null // scalafix:ok DisableSyntax.null
     }
 
     "put and get an object against an in-process Apollo double, preserving bytes" in {

@@ -1,5 +1,11 @@
 package me.cference.artemis.persistence
 
+import com.fasterxml.jackson.core.{JsonGenerator, JsonParser}
+import com.fasterxml.jackson.databind.Module.SetupContext
+import com.fasterxml.jackson.databind.deser.std.StdDeserializer
+import com.fasterxml.jackson.databind.module.SimpleModule
+import com.fasterxml.jackson.databind.ser.std.StdSerializer
+import com.fasterxml.jackson.databind.{DeserializationContext, SerializerProvider}
 import me.cference.artemis.domain.{
   Dimensions,
   PoolEvent,
@@ -10,12 +16,6 @@ import me.cference.artemis.domain.{
   Rating,
   Tag
 }
-import com.fasterxml.jackson.core.{JsonGenerator, JsonParser}
-import com.fasterxml.jackson.databind.Module.SetupContext
-import com.fasterxml.jackson.databind.deser.std.StdDeserializer
-import com.fasterxml.jackson.databind.module.SimpleModule
-import com.fasterxml.jackson.databind.ser.std.StdSerializer
-import com.fasterxml.jackson.databind.{DeserializationContext, SerializerProvider}
 
 /**
  * Teaches Pekko's Jackson ObjectMapper how to (de)serialize the pure-domain value types carried by
@@ -124,10 +124,9 @@ final class DomainJacksonModule extends SimpleModule("ArtemisDomainModule"):
         val node = p.getCodec.readTree[com.fasterxml.jackson.databind.JsonNode](p)
         val width = node.get("width").intValue
         val height = node.get("height").intValue
-        val durationNode = node.get("duration")
-        val duration =
-          if durationNode == null || durationNode.isNull then None
-          else Some(durationNode.longValue)
+        // `node.get` returns a Java null when the field is absent and a JSON-null node when present
+        // but null; `Option` + `filterNot(_.isNull)` collapses both to `None` without a null literal.
+        val duration = Option(node.get("duration")).filterNot(_.isNull).map(_.longValue)
         Dimensions.unsafe(width, height, duration)
   )
 

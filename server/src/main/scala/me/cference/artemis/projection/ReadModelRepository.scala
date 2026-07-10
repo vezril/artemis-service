@@ -1,6 +1,5 @@
 package me.cference.artemis.projection
 
-import me.cference.artemis.config.PostgresConfig
 import io.r2dbc.spi.{
   Connection,
   ConnectionFactories,
@@ -9,6 +8,7 @@ import io.r2dbc.spi.{
   Row,
   Statement
 }
+import me.cference.artemis.config.PostgresConfig
 import reactor.core.publisher.{Flux, Mono}
 
 import java.time.{Instant, OffsetDateTime, ZoneOffset}
@@ -443,8 +443,10 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
   private def toFuture[A](mono: Mono[A]): Future[A] =
     val promise = Promise[A]()
     mono.subscribe(
-      (value: A) => { promise.trySuccess(value); () },
-      (err: Throwable) => { promise.tryFailure(err); () },
-      () => { promise.trySuccess(null.asInstanceOf[A]); () }
+      (value: A) => { val _ = promise.trySuccess(value) },
+      (err: Throwable) => { val _ = promise.tryFailure(err) },
+      () => {
+        val _ = promise.trySuccess(null.asInstanceOf[A])
+      } // scalafix:ok DisableSyntax.null
     )
     promise.future

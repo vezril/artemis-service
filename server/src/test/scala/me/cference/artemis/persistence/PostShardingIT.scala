@@ -1,10 +1,9 @@
 package me.cference.artemis.persistence
 
-import me.cference.artemis.domain.*
-import me.cference.artemis.domain.PostCommand.*
 import com.dimafeng.testcontainers.{ForAllTestContainer, PostgreSQLContainer}
 import com.typesafe.config.{Config, ConfigFactory}
-import org.testcontainers.utility.DockerImageName
+import me.cference.artemis.domain.*
+import me.cference.artemis.domain.PostCommand.*
 import org.apache.pekko.Done
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
 import org.apache.pekko.cluster.MemberStatus
@@ -16,6 +15,7 @@ import org.scalatest.concurrent.{Eventually, ScalaFutures}
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.time.{Millis, Seconds, Span}
 import org.scalatest.wordspec.AnyWordSpec
+import org.testcontainers.utility.DockerImageName
 
 import java.sql.DriverManager
 import java.time.Instant
@@ -72,7 +72,7 @@ final class PostShardingIT
     sharding = PostSharding.init(testKit.system, () => graph)
 
   override def beforeStop(): Unit =
-    if testKit != null then testKit.shutdownTestKit()
+    if testKit != null then testKit.shutdownTestKit() // scalafix:ok DisableSyntax.null
 
   private def config(): Config =
     ConfigFactory

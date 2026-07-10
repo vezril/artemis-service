@@ -6,7 +6,7 @@ import org.apache.pekko.http.scaladsl.model.StatusCodes
 import org.apache.pekko.http.scaladsl.server.Directives.*
 import org.apache.pekko.http.scaladsl.server.Route
 
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.Future
 
 /**
  * The DSL read surface (catalog-api "Read endpoints served from projections", tasks 5.1-5.4): `GET
@@ -29,7 +29,7 @@ final class SearchRoutes(
     ],
     facetsFn: String => Future[Either[SearchError, Seq[FacetEntry]]],
     autocompleteTagsFn: (String, Int) => Future[Seq[TagSuggestion]]
-)(using ec: ExecutionContext):
+):
 
   import SearchJson.given
   import CatalogJson.given

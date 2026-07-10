@@ -1,15 +1,15 @@
 package me.cference.artemis.search
 
+import com.dimafeng.testcontainers.{ForAllTestContainer, PostgreSQLContainer}
 import me.cference.artemis.config.PostgresConfig
 import me.cference.artemis.domain.Tag
 import me.cference.artemis.projection.{FacetEntry, ReadModelRepository}
-import com.dimafeng.testcontainers.{ForAllTestContainer, PostgreSQLContainer}
-import org.testcontainers.utility.DockerImageName
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.time.{Millis, Seconds, Span}
 import org.scalatest.wordspec.AnyWordSpec
+import org.testcontainers.utility.DockerImageName
 
 import java.sql.DriverManager
 import scala.concurrent.ExecutionContext

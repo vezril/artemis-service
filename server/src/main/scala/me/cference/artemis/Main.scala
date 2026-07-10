@@ -1,5 +1,6 @@
 package me.cference.artemis
 
+import com.typesafe.config.ConfigFactory
 import me.cference.artemis.build.BuildInfo
 import me.cference.artemis.config.AppConfig
 import me.cference.artemis.grpc.ApolloObjectClient
@@ -28,7 +29,6 @@ import me.cference.artemis.search.{
   SearchService
 }
 import me.cference.artemis.tags.{TagGraphCache, TagGraphRepository}
-import com.typesafe.config.ConfigFactory
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
 import org.apache.pekko.cluster.sharding.typed.scaladsl.{ClusterSharding, ShardedDaemonProcess}
@@ -38,8 +38,8 @@ import org.apache.pekko.http.scaladsl.server.Route
 import org.apache.pekko.management.cluster.bootstrap.ClusterBootstrap
 import org.apache.pekko.management.scaladsl.PekkoManagement
 import org.apache.pekko.projection.ProjectionBehavior
-import org.apache.pekko.stream.{Materializer, RestartSettings}
 import org.apache.pekko.stream.scaladsl.{RestartSource, Sink, Source}
+import org.apache.pekko.stream.{Materializer, RestartSettings}
 import org.apache.pekko.util.Timeout
 import org.slf4j.LoggerFactory
 
@@ -82,7 +82,7 @@ object Main:
     val metrics = new MetricsRegistry(BuildInfo.version, () => readiness.get())
 
     // Cluster formation (config discovery; a lone node forms a cluster of one).
-    PekkoManagement(system).start()
+    val _ = PekkoManagement(system).start()
     ClusterBootstrap(system).start()
 
     // Read model + tag-graph cache. The cache's snapshot supplier is captured by the post entities
@@ -190,7 +190,7 @@ object Main:
     ready.onComplete {
       case Success(_) =>
         startProjections(readModel, runtimeCfg.projectionInstances)
-        graphCache.startScheduledRefresh(runtimeCfg.tagGraphRefresh)
+        val _ = graphCache.startScheduledRefresh(runtimeCfg.tagGraphRefresh)
         startConsumeLoop(consumer, metrics, runtimeCfg.consumeInterval, readiness)
         readiness.set(true)
         log.info("Postgres ready, tag graph loaded — Artemis is UP")

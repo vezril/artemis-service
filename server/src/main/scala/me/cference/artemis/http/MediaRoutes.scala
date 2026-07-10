@@ -2,11 +2,11 @@ package me.cference.artemis.http
 
 import me.cference.artemis.media.{MediaObject, MediaResolver, MediaSource}
 import org.apache.pekko.http.scaladsl.model.headers.{
-  `Accept-Ranges`,
-  `Content-Range`,
   ByteRange,
   Range,
-  RangeUnits
+  RangeUnits,
+  `Accept-Ranges`,
+  `Content-Range`
 }
 import org.apache.pekko.http.scaladsl.model.{
   ContentRange,

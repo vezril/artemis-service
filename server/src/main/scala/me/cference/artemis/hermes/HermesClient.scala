@@ -4,9 +4,9 @@ import me.cference.artemis.config.HermesConfig
 import me.cference.hermesmq.grpc.{
   AckRequest,
   AckResponse,
+  PubSubServiceClient,
   PublishRequest,
   PublishResponse,
-  PubSubServiceClient,
   PullRequest,
   PullResponse
 }
