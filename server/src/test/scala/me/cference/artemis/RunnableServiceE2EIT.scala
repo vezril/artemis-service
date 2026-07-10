@@ -9,6 +9,7 @@ import me.cference.artemis.config.{HermesConfig, PostgresConfig}
 import me.cference.artemis.domain.*
 import me.cference.artemis.domain.PostCommand.ChangeTags
 import me.cference.artemis.hermes.{HermesClient, HermesMediaJobPublisher, HermesMediaResultConsumer}
+import me.cference.artemis.http.UploadRoutes
 import me.cference.artemis.ingest.{
   InMemoryProcessedJobs,
   MediaResultHandler,
@@ -33,6 +34,15 @@ import org.apache.pekko.cluster.sharding.typed.scaladsl.ClusterSharding
 import org.apache.pekko.cluster.typed.{Cluster, Join}
 import org.apache.pekko.grpc.scaladsl.Metadata
 import org.apache.pekko.http.scaladsl.Http
+import org.apache.pekko.http.scaladsl.model.{
+  ContentType,
+  HttpEntity,
+  HttpMethods,
+  HttpRequest,
+  MediaTypes,
+  StatusCodes
+}
+import org.apache.pekko.http.scaladsl.unmarshalling.Unmarshal
 import org.apache.pekko.projection.ProjectionBehavior
 import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.util.{ByteString, Timeout}
@@ -180,7 +190,8 @@ final class RunnableServiceE2EIT
       val broker = new FakeBroker(Map(SubProcessed -> TopicProcessed, SubFailed -> TopicFailed))
       val hermes = hermesClientFor(broker)
 
-      // --- upload: real UploadService, fake Apollo put + real Hermes publish. ---
+      // --- upload: through the BOUND `POST /uploads` HTTP route → real UploadService (fake Apollo
+      // put + real Hermes publish). This exercises the actual HTTP seam, not a direct service call.
       val uploader = new FakeUploader
       val publisher = new HermesMediaJobPublisher(hermes, TopicProcess)
       val upload = new UploadService(
@@ -190,11 +201,26 @@ final class RunnableServiceE2EIT
         genId = () => "e2e-1",
         genJobId = () => "e2e-job-1"
       )
-      val result = upload
-        .upload(Source.single(ByteString("some png bytes")), "image/png", "image")
+      val uploadBinding = Http()(sys)
+        .newServerAt("127.0.0.1", 0)
+        .bind(new UploadRoutes(upload.upload).routes)
         .futureValue
-      result.postId.value shouldBe "e2e-1"
-      result.status shouldBe "pending"
+      val uploadUri = s"http://127.0.0.1:${uploadBinding.localAddress.getPort}/uploads"
+
+      val resp = Http()(sys)
+        .singleRequest(
+          HttpRequest(
+            method = HttpMethods.POST,
+            uri = uploadUri,
+            entity =
+              HttpEntity(ContentType.Binary(MediaTypes.`image/png`), ByteString("some png bytes"))
+          )
+        )
+        .futureValue
+      resp.status shouldBe StatusCodes.Created
+      val body = Unmarshal(resp.entity).to[String].futureValue
+      body should include("\"postId\":\"e2e-1\"")
+      body should include("\"status\":\"pending\"")
 
       // The upload created a pending post…
       state("e2e-1") shouldBe a[PostState.Pending]

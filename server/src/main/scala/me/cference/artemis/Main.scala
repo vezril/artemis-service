@@ -4,19 +4,22 @@ import com.typesafe.config.ConfigFactory
 import me.cference.artemis.build.BuildInfo
 import me.cference.artemis.config.AppConfig
 import me.cference.artemis.grpc.ApolloObjectClient
-import me.cference.artemis.hermes.{HermesClient, HermesMediaResultConsumer}
+import me.cference.artemis.hermes.{HermesClient, HermesMediaJobPublisher, HermesMediaResultConsumer}
 import me.cference.artemis.http.{
   CatalogRoutes,
   HealthRoutes,
   HttpServer,
   MediaRoutes,
   MetricsRoutes,
-  SearchRoutes
+  SearchRoutes,
+  UploadRoutes
 }
 import me.cference.artemis.ingest.{
+  ApolloObjectUploader,
   InMemoryProcessedJobs,
   MediaResultHandler,
-  ReadModelNearDuplicates
+  ReadModelNearDuplicates,
+  UploadService
 }
 import me.cference.artemis.media.ApolloMediaSource
 import me.cference.artemis.metrics.MetricsRegistry
@@ -115,6 +118,13 @@ object Main:
       resultHandler
     )
 
+    // The upload spine: bytes → Apollo (content-addressed) → pending post → ProcessMediaJob.
+    val uploadService = new UploadService(
+      new ApolloObjectUploader(apolloClient),
+      new HermesMediaJobPublisher(hermesClient, hermesCfg.topicMediaProcess),
+      postFor
+    )
+
     // The read surface: DSL search + facets over the read model, alias-resolving against the cache.
     val searchService = new SearchService(
       loadGraph = () => Future.successful(graphCache.current),
@@ -132,12 +142,14 @@ object Main:
     )
     val catalogRoutes = CatalogRoutes(postFor, poolFor)
     val mediaRoutes = MediaRoutes(new ApolloMediaSource(apolloClient))
+    val uploadRoutes = UploadRoutes(uploadService.upload)
     val apiRoutes: Route =
       HealthRoutes(BuildInfo.version, () => readiness.get()) ~
         MetricsRoutes(metrics) ~
         searchRoutes.routes ~
         catalogRoutes.routes ~
-        mediaRoutes.routes
+        mediaRoutes.routes ~
+        uploadRoutes.routes
 
     HttpServer.bind(apiRoutes, httpCfg.host, httpCfg.port).onComplete {
       case Success(binding) =>
