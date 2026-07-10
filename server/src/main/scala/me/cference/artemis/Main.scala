@@ -11,6 +11,7 @@ import me.cference.artemis.http.{
   HttpServer,
   MediaRoutes,
   MetricsRoutes,
+  RelatedTagsRoutes,
   SavedSearchRoutes,
   SearchRoutes,
   UploadRoutes
@@ -152,6 +153,7 @@ object Main:
     val mediaRoutes = MediaRoutes(new ApolloMediaSource(apolloClient))
     val uploadRoutes = UploadRoutes(uploadService.upload)
     val savedSearchRoutes = SavedSearchRoutes(savedSearchesRef, searchService.search)
+    val relatedTagsRoutes = RelatedTagsRoutes(readModel.relatedTags)
     val apiRoutes: Route =
       HealthRoutes(BuildInfo.version, () => readiness.get()) ~
         MetricsRoutes(metrics) ~
@@ -159,7 +161,8 @@ object Main:
         catalogRoutes.routes ~
         mediaRoutes.routes ~
         uploadRoutes.routes ~
-        savedSearchRoutes.routes
+        savedSearchRoutes.routes ~
+        relatedTagsRoutes.routes
 
     HttpServer.bind(apiRoutes, httpCfg.host, httpCfg.port).onComplete {
       case Success(binding) =>

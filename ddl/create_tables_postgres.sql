@@ -148,6 +148,21 @@ CREATE TABLE IF NOT EXISTS tags (
 
 CREATE INDEX IF NOT EXISTS tags_name_trgm ON tags USING GIN (name gin_trgm_ops);
 
+-- tag_cooccurrence: sparse pairwise co-occurrence counts for related-tags (cosine similarity).
+-- Each unordered pair {a,b} is stored ONCE with tag_a < tag_b, so a pair is never double-counted.
+-- Maintained incrementally by the post projection from the tag-set diff on TagsChanged (and on
+-- PostDeleted/PostRestored) — never recomputed — and rebuildable by replaying the journal. `n(X)`
+-- for the cosine reuses `tags.post_count`. The PK indexes tag_a; add an index on tag_b so the
+-- related-tags query (either side = X) is a lookup, not a scan.
+CREATE TABLE IF NOT EXISTS tag_cooccurrence (
+  tag_a VARCHAR(255) NOT NULL,
+  tag_b VARCHAR(255) NOT NULL,
+  count INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (tag_a, tag_b)
+);
+
+CREATE INDEX IF NOT EXISTS tag_cooccurrence_b ON tag_cooccurrence (tag_b);
+
 -- tag_aliases: same-meaning rename. One terminal consequent per antecedent (PK on antecedent);
 -- alias chains resolve to a terminal consequent in `TagCanonicalization`, not here.
 CREATE TABLE IF NOT EXISTS tag_aliases (

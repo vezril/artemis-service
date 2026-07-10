@@ -116,7 +116,7 @@ final class PoolProjectionIT
     ) { conn =>
       Using.resource(conn.createStatement()) { st =>
         val _ = st.execute(
-          "TRUNCATE posts, tags, pools, pool_posts, " +
+          "TRUNCATE posts, tags, tag_cooccurrence, pools, pool_posts, " +
             "projection_offset_store, projection_timestamp_offset_store, projection_management"
         )
       }
