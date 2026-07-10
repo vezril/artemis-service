@@ -175,26 +175,12 @@ final class CatalogRoutes(
       case Failure(ex) => complete(errorStatus(ex) -> ErrorResponse(errorMessage(ex)))
     }
 
-  /** Total mapping from a domain failure (bridged as `DomainException`) to an HTTP status. */
-  private def errorStatus(ex: Throwable): StatusCode =
-    ex match
-      case DomainException(error) =>
-        error match
-          case DomainError.PostNotFound | DomainError.PoolNotFound | DomainError.PostNotInPool =>
-            StatusCodes.NotFound
-          case DomainError.PostAlreadyExists | DomainError.PoolAlreadyExists =>
-            StatusCodes.Conflict
-          case _: DomainError.InvalidRating | _: DomainError.InvalidTag |
-              _: DomainError.InvalidTagCategory | _: DomainError.InvalidPostId |
-              _: DomainError.InvalidPoolId | _: DomainError.InvalidPoolName |
-              _: DomainError.InvalidDimensions =>
-            StatusCodes.BadRequest
-      case _ => StatusCodes.InternalServerError
+  /**
+   * Domain failure → HTTP status, via the shared [[HttpErrors]] mapping (single exhaustive match).
+   */
+  private def errorStatus(ex: Throwable): StatusCode = HttpErrors.statusOf(ex)
 
-  private def errorMessage(ex: Throwable): String =
-    ex match
-      case DomainException(error) => error.message
-      case other => Option(other.getMessage).getOrElse("unexpected error")
+  private def errorMessage(ex: Throwable): String = HttpErrors.messageOf(ex)
 
 object CatalogRoutes:
   def apply(

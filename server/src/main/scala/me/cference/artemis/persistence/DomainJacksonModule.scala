@@ -14,6 +14,8 @@ import me.cference.artemis.domain.{
   PostEvent,
   PostId,
   Rating,
+  SavedSearchesEvent,
+  SearchName,
   Tag
 }
 
@@ -85,6 +87,20 @@ final class DomainJacksonModule extends SimpleModule("ArtemisDomainModule"):
         Tag.unsafe(p.getValueAsString)
   )
 
+  // --- SearchName <-> JSON string ---
+  addSerializer(
+    classOf[SearchName],
+    new StdSerializer[SearchName](classOf[SearchName]):
+      def serialize(v: SearchName, gen: JsonGenerator, p: SerializerProvider): Unit =
+        gen.writeString(v.value)
+  )
+  addDeserializer(
+    classOf[SearchName],
+    new StdDeserializer[SearchName](classOf[SearchName]):
+      def deserialize(p: JsonParser, ctx: DeserializationContext): SearchName =
+        SearchName.unsafe(p.getValueAsString)
+  )
+
   // --- Rating <-> JSON string (the single canonical letter code) ---
   // jackson-module-scala does not handle Scala 3 enums, so map to/from `code` explicitly. A
   // persisted code is trusted; an impossible bad code throws at this rehydration boundary.
@@ -134,3 +150,4 @@ final class DomainJacksonModule extends SimpleModule("ArtemisDomainModule"):
     super.setupModule(context)
     context.setMixInAnnotations(classOf[PostEvent], classOf[PostEventMixin])
     context.setMixInAnnotations(classOf[PoolEvent], classOf[PoolEventMixin])
+    context.setMixInAnnotations(classOf[SavedSearchesEvent], classOf[SavedSearchesEventMixin])
