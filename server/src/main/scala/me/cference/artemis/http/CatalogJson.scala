@@ -49,6 +49,10 @@ final case class RenamePoolRequest(name: String)
 final case class CreatePoolResponse(poolId: String, status: String)
 final case class PoolResponse(id: String, name: String, posts: List[String])
 
+// --- Upload ---
+
+final case class UploadResponse(postId: String, status: String)
+
 // --- Errors ---
 
 final case class ErrorResponse(error: String)
@@ -67,5 +71,7 @@ object CatalogJson:
   given RootJsonFormat[RenamePoolRequest] = jsonFormat1(RenamePoolRequest.apply)
   given RootJsonFormat[CreatePoolResponse] = jsonFormat2(CreatePoolResponse.apply)
   given RootJsonFormat[PoolResponse] = jsonFormat3(PoolResponse.apply)
+
+  given RootJsonFormat[UploadResponse] = jsonFormat2(UploadResponse.apply)
 
   given RootJsonFormat[ErrorResponse] = jsonFormat1(ErrorResponse.apply)
