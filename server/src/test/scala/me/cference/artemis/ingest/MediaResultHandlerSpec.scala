@@ -8,6 +8,7 @@ import codex.messages.v1.{
   MediaProcessed,
   ObjectRef
 }
+import com.typesafe.config.ConfigFactory
 import me.cference.artemis.domain.PostCommand.CreatePost
 import me.cference.artemis.domain.{Filetype, Md5, PostId, PostState}
 import me.cference.artemis.persistence.PostEntity
@@ -15,12 +16,11 @@ import org.apache.pekko.Done
 import org.apache.pekko.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 import org.apache.pekko.actor.typed.RecipientRef
 import org.apache.pekko.pattern.StatusReply
-import org.apache.pekko.util.Timeout
-import com.typesafe.config.ConfigFactory
 import org.apache.pekko.persistence.testkit.{
   PersistenceTestKitPlugin,
   PersistenceTestKitSnapshotPlugin
 }
+import org.apache.pekko.util.Timeout
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.time.{Millis, Seconds, Span}

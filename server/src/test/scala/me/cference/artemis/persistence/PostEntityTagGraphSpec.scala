@@ -1,11 +1,11 @@
 package me.cference.artemis.persistence
 
+import com.typesafe.config.ConfigFactory
 import me.cference.artemis.domain.*
 import me.cference.artemis.domain.PostCommand.*
 import org.apache.pekko.Done
 import org.apache.pekko.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 import org.apache.pekko.pattern.StatusReply
-import com.typesafe.config.ConfigFactory
 import org.apache.pekko.persistence.testkit.{
   PersistenceTestKitPlugin,
   PersistenceTestKitSnapshotPlugin

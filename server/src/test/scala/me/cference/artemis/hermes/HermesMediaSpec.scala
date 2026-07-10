@@ -18,8 +18,6 @@ import me.cference.artemis.ingest.{InMemoryProcessedJobs, MediaResultHandler}
 import me.cference.artemis.messages.MediaMessages
 import me.cference.artemis.persistence.PostEntity
 import me.cference.hermesmq.grpc.*
-import org.apache.pekko.Done
-import org.apache.pekko.NotUsed
 import org.apache.pekko.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 import org.apache.pekko.actor.typed.RecipientRef
 import org.apache.pekko.grpc.scaladsl.Metadata
@@ -31,6 +29,7 @@ import org.apache.pekko.persistence.testkit.{
 }
 import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.util.Timeout
+import org.apache.pekko.{Done, NotUsed}
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.time.{Millis, Seconds, Span}

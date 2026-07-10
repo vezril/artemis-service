@@ -31,7 +31,7 @@ object PostSharding:
       tagGraph: () => TagGraph = () => TagGraph.empty
   ): ClusterSharding =
     val sharding = ClusterSharding(system)
-    sharding.init(Entity(TypeKey)(ctx => PostEntity(PostId.unsafe(ctx.entityId), tagGraph)))
+    val _ = sharding.init(Entity(TypeKey)(ctx => PostEntity(PostId.unsafe(ctx.entityId), tagGraph)))
     sharding
 
   def entityRef(sharding: ClusterSharding, id: String): EntityRef[PostEntity.Command] =

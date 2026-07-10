@@ -1,12 +1,11 @@
 package me.cference.artemis.projection
 
+import com.dimafeng.testcontainers.{ForAllTestContainer, PostgreSQLContainer}
+import com.typesafe.config.{Config, ConfigFactory}
 import me.cference.artemis.config.PostgresConfig
 import me.cference.artemis.domain.*
 import me.cference.artemis.domain.PoolCommand.*
 import me.cference.artemis.persistence.PoolEntity
-import com.dimafeng.testcontainers.{ForAllTestContainer, PostgreSQLContainer}
-import com.typesafe.config.{Config, ConfigFactory}
-import org.testcontainers.utility.DockerImageName
 import org.apache.pekko.Done
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
 import org.apache.pekko.pattern.StatusReply
@@ -16,6 +15,7 @@ import org.scalatest.concurrent.{Eventually, ScalaFutures}
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.time.{Millis, Seconds, Span}
 import org.scalatest.wordspec.AnyWordSpec
+import org.testcontainers.utility.DockerImageName
 
 import java.sql.DriverManager
 import java.time.Instant
@@ -58,7 +58,7 @@ final class PoolProjectionIT
     repo = new ReadModelRepository(pgConfig)(using testKit.system.executionContext)
 
   override def beforeStop(): Unit =
-    if testKit != null then testKit.shutdownTestKit()
+    if testKit != null then testKit.shutdownTestKit() // scalafix:ok DisableSyntax.null
 
   private def pgConfig = PostgresConfig(
     container.host,

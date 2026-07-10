@@ -1,9 +1,9 @@
 package me.cference.artemis.domain
 
-import org.scalatest.matchers.should.Matchers
-import org.scalatest.wordspec.AnyWordSpec
 import me.cference.artemis.domain.PostCommand.*
 import me.cference.artemis.domain.PostEvent.*
+import org.scalatest.matchers.should.Matchers
+import org.scalatest.wordspec.AnyWordSpec
 
 import java.time.Instant
 

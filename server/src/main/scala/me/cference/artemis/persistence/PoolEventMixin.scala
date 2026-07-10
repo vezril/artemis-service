@@ -1,7 +1,7 @@
 package me.cference.artemis.persistence
 
-import me.cference.artemis.domain.PoolEvent
 import com.fasterxml.jackson.annotation.{JsonSubTypes, JsonTypeInfo}
+import me.cference.artemis.domain.PoolEvent
 
 /**
  * Jackson mix-in that adds polymorphic type information to the pure `PoolEvent` ADT without putting

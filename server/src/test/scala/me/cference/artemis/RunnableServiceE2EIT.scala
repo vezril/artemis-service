@@ -1,15 +1,9 @@
 package me.cference.artemis
 
 import apollostorage.grpc.{PutHeader, PutObjectResponse}
-import codex.messages.v1.{
-  Derivative as WireDerivative,
-  MediaMetadata,
-  MediaProcessed,
-  ObjectRef,
-  ProcessMediaJob
-}
-import com.google.protobuf.ByteString as ProtoBytes
+import codex.messages.v1.{Derivative as WireDerivative, MediaMetadata, MediaProcessed, ObjectRef}
 import com.dimafeng.testcontainers.{ForAllTestContainer, PostgreSQLContainer}
+import com.google.protobuf.ByteString as ProtoBytes
 import com.typesafe.config.{Config, ConfigFactory}
 import me.cference.artemis.config.{HermesConfig, PostgresConfig}
 import me.cference.artemis.domain.*
@@ -32,17 +26,14 @@ import me.cference.artemis.search.{
   SearchService
 }
 import me.cference.hermesmq.grpc.*
-import org.testcontainers.utility.DockerImageName
 import org.apache.pekko.NotUsed
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
-import org.apache.pekko.actor.typed.scaladsl.AskPattern.*
 import org.apache.pekko.cluster.MemberStatus
 import org.apache.pekko.cluster.sharding.typed.scaladsl.ClusterSharding
 import org.apache.pekko.cluster.typed.{Cluster, Join}
 import org.apache.pekko.grpc.scaladsl.Metadata
 import org.apache.pekko.http.scaladsl.Http
 import org.apache.pekko.projection.ProjectionBehavior
-import org.apache.pekko.stream.Materializer
 import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.util.{ByteString, Timeout}
 import org.scalatest.BeforeAndAfterAll
@@ -50,6 +41,7 @@ import org.scalatest.concurrent.{Eventually, ScalaFutures}
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.time.{Millis, Seconds, Span}
 import org.scalatest.wordspec.AnyWordSpec
+import org.testcontainers.utility.DockerImageName
 
 import java.nio.charset.StandardCharsets.UTF_8
 import java.sql.DriverManager
@@ -115,7 +107,7 @@ final class RunnableServiceE2EIT
     val _ = testKit.spawn(ProjectionBehavior(PostProjection(repo)(using testKit.system)))
 
   override def beforeStop(): Unit =
-    if testKit != null then testKit.shutdownTestKit()
+    if testKit != null then testKit.shutdownTestKit() // scalafix:ok DisableSyntax.null
 
   private def pgConfig =
     PostgresConfig(
@@ -183,7 +175,6 @@ final class RunnableServiceE2EIT
     "carry a post upload → pending → processed → active → searchable" in {
       val sys = testKit.system
       given org.apache.pekko.actor.typed.ActorSystem[Nothing] = sys
-      given Materializer = Materializer(sys)
       given scala.concurrent.ExecutionContext = sys.executionContext
 
       val broker = new FakeBroker(Map(SubProcessed -> TopicProcessed, SubFailed -> TopicFailed))

@@ -5,9 +5,8 @@ import me.cference.artemis.domain.PostCommand.{FlagPossibleDuplicate, MarkFailed
 import me.cference.artemis.domain.{Derivative, Dimensions, Phash, PostCommand, PostId}
 import me.cference.artemis.persistence.PostEntity
 import org.apache.pekko.Done
-import org.apache.pekko.actor.typed.ActorSystem
-import org.apache.pekko.actor.typed.RecipientRef
 import org.apache.pekko.actor.typed.scaladsl.AskPattern.*
+import org.apache.pekko.actor.typed.{ActorSystem, RecipientRef}
 import org.apache.pekko.util.Timeout
 import org.slf4j.LoggerFactory
 

@@ -1,12 +1,12 @@
 package me.cference.artemis.persistence
 
-import me.cference.artemis.config.PostgresConfig
 import com.dimafeng.testcontainers.{ForAllTestContainer, PostgreSQLContainer}
-import org.testcontainers.utility.DockerImageName
+import me.cference.artemis.config.PostgresConfig
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.time.{Millis, Seconds, Span}
 import org.scalatest.wordspec.AnyWordSpec
+import org.testcontainers.utility.DockerImageName
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.*

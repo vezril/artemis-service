@@ -1,8 +1,8 @@
 package me.cference.artemis.domain
 
-import me.cference.artemis.domain.PoolState.*
 import me.cference.artemis.domain.PoolCommand.*
 import me.cference.artemis.domain.PoolEvent.*
+import me.cference.artemis.domain.PoolState.*
 
 /**
  * Pure state-transition logic for the pool aggregate. Two total functions:

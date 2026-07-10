@@ -1,6 +1,6 @@
 package me.cference.artemis.search
 
-import me.cference.artemis.domain.{Tag, TagGraph}
+import me.cference.artemis.domain.TagGraph
 import me.cference.artemis.projection.{FacetEntry, PostRow}
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.matchers.should.Matchers
