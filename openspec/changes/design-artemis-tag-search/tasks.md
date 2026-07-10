@@ -35,10 +35,10 @@ Dependency order: tag relationships → DSL parse (pure) → resolve/plan → SQ
 
 ## 4. Search DSL — compile to SQL & execute (`server`)
 
-- [ ] 4.1 (test) SQL shape: `tags @> :includes` (GIN), `NOT (tags && :excludes)`, `tags && :orSet` (only when non-empty), metatag predicates ANDed
-- [ ] 4.2 (test) metatag catalog: scalars/cmp/range (`score`,`id`,`width`,`height`,`mpixels`,`ratio`,`filesize`,`favcount`); enums (`rating` g|s|q|e, `filetype`, `status` STUB); video (`duration`,`fps`,`filetype` webm|mp4|gif,`is:video`,`is:animated`,`audio`); `date`/`age`
-- [ ] 4.3 (test) ordering + **keyset** pagination (`order:id|score|favcount|duration|mpixels|filesize`, composite `(key,id)` cursor, never OFFSET); `order:random:SEED` seeded + stable (seed carried in the cursor)
-- [ ] 4.4 (impl) SQL compiler + `ReadModelRepository` execution, verified against Postgres (testcontainers)
+- [x] 4.1 (test) SQL shape: `tags @> :includes` (GIN), `NOT (tags && :excludes)`, `tags && :orSet` (per OR group; empty group → `FALSE`), default `status <> 'deleted'`, metatag predicates ANDed
+- [x] 4.2 (test) metatag catalog — column-backed: `score`,`favcount`,`width`,`height`,`duration`,`id`(string),`mpixels`,`ratio`,`rating`(g|s|q|e),`filetype`,`md5`,`source`,`parent`,`date`/`age`,`is:video`/`is:animated`,`status`(STUB); `Exclude`→`NOT(...)`. DEFERRED via typed `UnsupportedMetatag` (no read-model columns): `filesize`,`fps`,`audio`,`pool`,`ordpool`
+- [x] 4.3 (test) ordering + **keyset** row-value pagination (never OFFSET; nullable order cols COALESCEd so no gap); `order:random` seeded + stable (seed in cursor); page-size clamp to 200
+- [x] 4.4 (impl) `SqlCompiler` + `SearchExecutor` over `ReadModelRepository`, verified against Postgres (testcontainers) — paging no-overlap/no-gap, stable random, injection-safe (all binds)
 
 ## 5. Catalog API — search, facets, autocomplete (unblocks internals 5.1/5.4)
 
