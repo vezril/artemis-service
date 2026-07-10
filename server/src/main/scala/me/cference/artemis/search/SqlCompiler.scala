@@ -71,18 +71,42 @@ object SqlCompiler:
     val order = normalizeOrder(plan)
     for
       _ <- validateOrder(order)
-      predFrags <- traverse(plan.predicates)(compileMetaTerm)
       keyset <- keysetCondition(order, cursor, seed)
       orderBy <- orderByClause(order, seed)
+      where <- whereFragments(plan, keyset.toSeq)
     yield
-      val where = tagConditions(plan) ++ statusDefault(plan) ++ predFrags ++ keyset.toSeq
-      val whereSql = where.map(_._1).mkString(" AND ")
-      val whereParams = where.flatMap(_._2)
+      val (whereSql, whereParams) = where
       val limit = effectiveLimit(plan, pageSize)
       val templated =
         s"SELECT $Columns FROM posts WHERE $whereSql ORDER BY ${orderBy._1} LIMIT ?"
       val params = whereParams ++ orderBy._2 :+ SqlParam.IntP(limit)
       CompiledQuery(numberPlaceholders(templated), params)
+
+  /**
+   * The plan's WHERE predicate alone (tag core + status default + metatag predicates), numbered
+   * from `$1` and with no ORDER BY / LIMIT / cursor keyset. Shared with the facet aggregation (task
+   * 5.2) so it filters over the exact same matching set as [[compile]] rather than duplicating the
+   * logic.
+   */
+  def compileWhere(plan: QueryPlan): Either[CompileError, CompiledQuery] =
+    whereFragments(plan, Seq.empty).map { case (whereSql, whereParams) =>
+      CompiledQuery(numberPlaceholders(whereSql), whereParams)
+    }
+
+  /**
+   * Assemble the AND-joined WHERE fragment + ordered params: tag conditions, the default
+   * not-deleted status filter, the compiled metatag predicates, then any keyset row-value condition
+   * (appended last so its params trail the predicate params, matching `compile`'s placeholder
+   * order).
+   */
+  private def whereFragments(
+      plan: QueryPlan,
+      keyset: Seq[Frag]
+  ): Either[CompileError, (String, Seq[SqlParam])] =
+    traverse(plan.predicates)(compileMetaTerm).map { predFrags =>
+      val where = tagConditions(plan) ++ statusDefault(plan) ++ predFrags ++ keyset
+      (where.map(_._1).mkString(" AND "), where.flatMap(_._2))
+    }
 
   // --- 4.1 tag conditions -------------------------------------------------
 
