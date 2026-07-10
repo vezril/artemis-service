@@ -190,8 +190,14 @@ final class PostProjectionIT
       send(id, Favorite(now))
 
       runProjection {
+        // Gate on `favCount == 1` — `Favorite` is the LAST event, so once it lands every earlier
+        // event (tags, etc.) is applied too. Gating on an earlier event (tags) and then reading a
+        // later-event fact (favCount) below would race: the projection applies events in order, so
+        // `before` could capture favCount == 0 before `Favorite` is processed.
         eventually {
-          repo.getPost("rb1").futureValue.map(_.tags.sorted) shouldBe Some(Seq("gamma", "rebuild"))
+          val row = repo.getPost("rb1").futureValue.getOrElse(fail("rb1 not projected"))
+          row.tags.sorted shouldBe Seq("gamma", "rebuild")
+          row.favCount shouldBe 1
         }
       }
       val before = repo.getPost("rb1").futureValue.getOrElse(fail("missing before rebuild"))
@@ -225,12 +231,17 @@ final class PostProjectionIT
       send(id, Score(2, now))
 
       runProjection {
+        // Gate on `score == 5` — `Scored(5)` is the LAST event, so once it lands `Favorite` (earlier)
+        // is applied too. Gating on `favCount` (an earlier event) and then reading `score` (a later
+        // event) below would race: the projection applies events in order, so a `favCount == 1` gate
+        // can pass while `score` is still 0.
         eventually {
-          repo.getPost("idem1").futureValue.map(_.favCount) shouldBe Some(1)
+          val row = repo.getPost("idem1").futureValue.getOrElse(fail("idem1 not projected"))
+          row.score shouldBe 5
+          row.favCount shouldBe 1
         }
       }
       val first = repo.getPost("idem1").futureValue.getOrElse(fail("missing"))
-      first.score shouldBe 5
       val tagCountFirst = repo.tagPostCount("idem_tag").futureValue
 
       // Clear only the offsets (not the read model) and replay: upsert-keyed writes + the
