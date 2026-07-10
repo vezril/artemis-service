@@ -11,6 +11,7 @@ import me.cference.artemis.http.{
   HttpServer,
   MediaRoutes,
   MetricsRoutes,
+  SavedSearchRoutes,
   SearchRoutes,
   UploadRoutes
 }
@@ -23,7 +24,12 @@ import me.cference.artemis.ingest.{
 }
 import me.cference.artemis.media.ApolloMediaSource
 import me.cference.artemis.metrics.MetricsRegistry
-import me.cference.artemis.persistence.{PersistenceReadiness, PoolSharding, PostSharding}
+import me.cference.artemis.persistence.{
+  PersistenceReadiness,
+  PoolSharding,
+  PostSharding,
+  SavedSearchesSharding
+}
 import me.cference.artemis.projection.{PoolProjection, PostProjection, ReadModelRepository}
 import me.cference.artemis.search.{
   FacetExecutor,
@@ -98,8 +104,10 @@ object Main:
     // ref factories (an EntityRef is a RecipientRef).
     val postShard: ClusterSharding = PostSharding.init(system, graphCache.snapshot)
     val poolShard: ClusterSharding = PoolSharding.init(system)
+    val savedShard: ClusterSharding = SavedSearchesSharding.init(system)
     val postFor = (id: String) => PostSharding.entityRef(postShard, id)
     val poolFor = (id: String) => PoolSharding.entityRef(poolShard, id)
+    val savedSearchesRef = () => SavedSearchesSharding.entityRef(savedShard)
 
     // gRPC clients (app-lifetime singletons; channels released on system termination).
     val apolloClient = new ApolloObjectClient(apolloCfg)
@@ -143,13 +151,15 @@ object Main:
     val catalogRoutes = CatalogRoutes(postFor, poolFor)
     val mediaRoutes = MediaRoutes(new ApolloMediaSource(apolloClient))
     val uploadRoutes = UploadRoutes(uploadService.upload)
+    val savedSearchRoutes = SavedSearchRoutes(savedSearchesRef, searchService.search)
     val apiRoutes: Route =
       HealthRoutes(BuildInfo.version, () => readiness.get()) ~
         MetricsRoutes(metrics) ~
         searchRoutes.routes ~
         catalogRoutes.routes ~
         mediaRoutes.routes ~
-        uploadRoutes.routes
+        uploadRoutes.routes ~
+        savedSearchRoutes.routes
 
     HttpServer.bind(apiRoutes, httpCfg.host, httpCfg.port).onComplete {
       case Success(binding) =>
