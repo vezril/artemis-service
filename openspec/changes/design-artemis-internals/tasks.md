@@ -44,21 +44,29 @@ pure domain → projections → ingest → API → media gateway.
 
 ## 5. Catalog API + media gateway
 
-- [~] 5.1 (test) `GET /posts` (DSL, order, keyset cursor); `GET /posts/{id}` (read-your-writes); autocomplete
+- [x] 5.1 (test) `GET /posts` (DSL, order, keyset cursor); `GET /posts/{id}` (read-your-writes); autocomplete
       <!-- read-your-writes `GET /posts/{id}` + `GET /pools/{id}` DONE (CatalogRoutesSpec); DSL list,
-           keyset cursor, order, and autocomplete DEFERRED to the search-DSL milestone (M5, in the
-           design-artemis-tag-search change) since they need the DSL→SQL compiler. -->
+           keyset cursor, order, and autocomplete built + tested in the search-DSL milestone (M5,
+           design-artemis-tag-search) and now SERVED by the assembled runtime (M9,
+           assemble-runnable-service) — SearchRoutesSpec/SearchQueryIT + the 6.1 e2e cover it. -->
 - [x] 5.2 (test) writes → commands (`POST /posts`, `PATCH …/tags`, favorite, score, pools); 404 on missing
 - [x] 5.3 (test) media gateway streams Apollo derivatives over HTTP; `206` for video ranges
       <!-- `GET /media/{md5}/{variant}` behind a `MediaSource` port (`ApolloMediaSource` peels the
            getObject header/body); 200 full, 206 + Content-Range (byte-sliced across chunks), 416,
            404, Accept-Ranges — all route-tested Docker-free. -->
-- [~] 5.4 (impl) pekko-http routes + media streaming; wire to entities + projections
+- [x] 5.4 (impl) pekko-http routes + media streaming; wire to entities + projections
       <!-- Write routes (5.2, wired to entities) + read-by-id + the media-streaming gateway (5.3) DONE.
-           The DSL `GET /posts` list routes (wire to projections) remain — deferred to the search-DSL
-           milestone (see 5.1). -->
+           The DSL `GET /posts` list routes are now composed + served by M9's Main (search-first,
+           wired to the projections via SearchService) — completing this task. -->
 
 ## 6. Integration
 
-- [ ] 6.1 (test) end-to-end (testcontainers): upload → pending → (mock Hephaestus) MediaProcessed → active → searchable
-- [ ] 6.2 (docs) README: architecture, the Muses API contract, config
+- [x] 6.1 (test) end-to-end (testcontainers): upload → pending → (mock Hephaestus) MediaProcessed → active → searchable
+      <!-- Done in M9 (assemble-runnable-service) as `RunnableServiceE2EIT`: testcontainers Postgres +
+           in-process Apollo/Hermes doubles drive the real assembled spine end to end. -->
+- [x] 6.2 (docs) README: architecture, the Muses API contract, config
+      <!-- README written in M9 (assemble-runnable-service 7.3): architecture, run/Docker, config,
+           and endpoint reference. -->
+
+<!-- 5.1/5.4/6.1/6.2 completed under the M9 assemble-runnable-service change, which binds and serves
+     the surface these tasks describe. Ready to archive design-artemis-internals once M9 lands. -->

@@ -53,6 +53,29 @@ final case class HermesConfig(
  */
 final case class DedupConfig(hammingThreshold: Int)
 
+/**
+ * Bind coordinates for the HTTP API surface (health, metrics, search, catalog, media gateway). Read
+ * from `artemis.http`; env-overridable so no host/port is hard-coded in
+ * [[me.cference.artemis.Main]].
+ */
+final case class HttpConfig(host: String, port: Int)
+
+/**
+ * Runtime loop cadences and the startup readiness probe budget (service-runtime spec). Read from
+ * `artemis.runtime`, all env-overridable:
+ *   - `consumeInterval` — how often the Hermes consume loop pulls each result subscription.
+ *   - `tagGraphRefresh` — how often the tag-graph cache reloads from Postgres (bounded staleness).
+ *   - `readinessRetries` / `readinessRetryDelay` — the Postgres readiness probe budget before the
+ *     boot aborts.
+ */
+final case class RuntimeConfig(
+    consumeInterval: FiniteDuration,
+    tagGraphRefresh: FiniteDuration,
+    readinessRetries: Int,
+    readinessRetryDelay: FiniteDuration,
+    projectionInstances: Int
+)
+
 object AppConfig:
 
   def postgres(config: Config): PostgresConfig =
@@ -87,3 +110,18 @@ object AppConfig:
 
   def dedup(config: Config): DedupConfig =
     DedupConfig(hammingThreshold = config.getInt("artemis.dedup.hamming-threshold"))
+
+  def http(config: Config): HttpConfig =
+    val hc = config.getConfig("artemis.http")
+    HttpConfig(host = hc.getString("host"), port = hc.getInt("port"))
+
+  def runtime(config: Config): RuntimeConfig =
+    val rc = config.getConfig("artemis.runtime")
+    RuntimeConfig(
+      consumeInterval = rc.getDuration("consume-interval").toMillis.millis,
+      tagGraphRefresh = rc.getDuration("tag-graph-refresh").toMillis.millis,
+      readinessRetries = rc.getInt("readiness-retries"),
+      readinessRetryDelay = rc.getDuration("readiness-retry-delay").toMillis.millis,
+      // Distributed projection workers; lives in cluster.conf alongside the sharding config.
+      projectionInstances = config.getInt("artemis.projection.instances")
+    )
