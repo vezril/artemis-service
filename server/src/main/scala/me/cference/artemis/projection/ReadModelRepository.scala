@@ -54,6 +54,14 @@ final case class TagSuggestion(
 )
 
 /**
+ * One related tag for a queried tag X: the co-occurring tag, how many posts carry both (the
+ * `cooccurrence` count `co(X,Y)`), and the cosine similarity `co(X,Y) / sqrt(n(X)·n(Y))` used to
+ * rank it. Cosine down-weights ubiquitous tags, so a genuinely-correlated tag outranks a common
+ * one.
+ */
+final case class RelatedTag(name: String, cooccurrence: Int, cosine: Double)
+
+/**
  * Read model over PostgreSQL: idempotent upserts/updates applied by the projection handlers, and a
  * few read helpers for the ITs. Uses its own short-lived r2dbc connections (not the persistence
  * plugin's pool), so the read side is independent of the write side. Every handler write is
@@ -141,15 +149,25 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
   def deletePost(id: String): Future[Unit] =
     postStatusAndTags(id).flatMap {
       case Some((status, tags)) if status != "deleted" =>
-        sequentially(tags)(decrementTagCount).flatMap(_ => setStatus(id, "deleted"))
+        for
+          _ <- sequentially(tags)(decrementTagCount)
+          _ <- sequentially(pairsOf(tags.toSet).toSeq)(
+            decrementPair
+          ) // drop the post's co-occurrence
+          _ <- setStatus(id, "deleted")
+        yield ()
       case _ => Future.successful(()) // already deleted or absent: no-op
     }
 
-  /** Reverse of [[deletePost]]: re-add the tags to the counts, then set status active. */
+  /** Reverse of [[deletePost]]: re-add the tags to the counts + co-occurrence, then set active. */
   def restorePost(id: String): Future[Unit] =
     postStatusAndTags(id).flatMap {
       case Some((status, tags)) if status == "deleted" =>
-        sequentially(tags)(incrementTagCount).flatMap(_ => setStatus(id, "active"))
+        for
+          _ <- sequentially(tags)(incrementTagCount)
+          _ <- sequentially(pairsOf(tags.toSet).toSeq)(incrementPair)
+          _ <- setStatus(id, "active")
+        yield ()
       case _ => Future.successful(()) // already active or absent: no-op
     }
 
@@ -221,6 +239,12 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
       val currentSet = current.toSet
       val added = (newSet -- currentSet).toSeq
       val removed = (currentSet -- newSet).toSeq
+      // Co-occurrence (related-tags): the post's contribution is every pair among its tags, so the
+      // delta is the pair-set difference — pairs newly present increment, pairs gone decrement,
+      // pairs in both untouched. Reusing the same current-vs-new read keeps it idempotent (re-applying
+      // the same TagsChanged is a zero-delta no-op) and correct on rebuild-from-empty.
+      val oldPairs = pairsOf(currentSet)
+      val newPairs = pairsOf(newSet)
       for
         _ <- update(
           "UPDATE posts SET tags = $2 WHERE id = $1",
@@ -228,6 +252,8 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
         )
         _ <- sequentially(added)(incrementTagCount)
         _ <- sequentially(removed)(decrementTagCount)
+        _ <- sequentially((newPairs -- oldPairs).toSeq)(incrementPair)
+        _ <- sequentially((oldPairs -- newPairs).toSeq)(decrementPair)
       yield ()
     }
 
@@ -248,6 +274,62 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
       "UPDATE tags SET post_count = GREATEST(post_count - 1, 0) WHERE name = $1",
       _.bind(0, name)
     ).map(_ => ())
+
+  // --- tag co-occurrence (related-tags) --------------------------------------
+
+  /**
+   * The canonical unordered pairs among a set of tags: each pair once as `(a, b)` with `a < b`, so
+   * a pair is stored a single way in `tag_cooccurrence` and never double-counted.
+   */
+  private def pairsOf(tags: Set[String]): Set[(String, String)] =
+    val sorted = tags.toVector.sorted
+    (for
+      i <- sorted.indices
+      j <- (i + 1) until sorted.length
+    yield (sorted(i), sorted(j))).toSet
+
+  private def incrementPair(pair: (String, String)): Future[Unit] =
+    update(
+      """INSERT INTO tag_cooccurrence (tag_a, tag_b, count) VALUES ($1, $2, 1)
+        |ON CONFLICT (tag_a, tag_b) DO UPDATE SET count = tag_cooccurrence.count + 1""".stripMargin,
+      _.bind(0, pair._1).bind(1, pair._2)
+    ).map(_ => ())
+
+  private def decrementPair(pair: (String, String)): Future[Unit] =
+    update(
+      "UPDATE tag_cooccurrence SET count = GREATEST(count - 1, 0) WHERE tag_a = $1 AND tag_b = $2",
+      _.bind(0, pair._1).bind(1, pair._2)
+    ).map(_ => ())
+
+  /**
+   * The top related tags for `tag` X, ranked by cosine `co(X,Y) / sqrt(n(X)·n(Y))` computed from
+   * the co-occurrence table + `tags.post_count`. Served from the projection (a lookup on either
+   * side of the pair, not a library scan); excludes X itself (pairs are between distinct tags) and
+   * any tag with no live posts. Empty when X has no co-occurrences or no posts.
+   */
+  def relatedTags(tag: String, limit: Int): Future[Seq[RelatedTag]] =
+    query(
+      """WITH nx AS (SELECT post_count AS n FROM tags WHERE name = $1)
+        |SELECT co.other AS name, co.cooc AS cooc,
+        |       co.cooc::float8 / sqrt(nx.n::float8 * t.post_count::float8) AS cosine
+        |FROM (
+        |  SELECT (CASE WHEN tag_a = $1 THEN tag_b ELSE tag_a END) AS other, count AS cooc
+        |  FROM tag_cooccurrence
+        |  WHERE (tag_a = $1 OR tag_b = $1) AND count > 0
+        |) co
+        |CROSS JOIN nx
+        |JOIN tags t ON t.name = co.other
+        |WHERE nx.n > 0 AND t.post_count > 0
+        |ORDER BY cosine DESC, name ASC
+        |LIMIT $2""".stripMargin,
+      _.bind(0, tag).bind(1, Integer.valueOf(limit))
+    ) { row =>
+      RelatedTag(
+        row.get("name", classOf[String]),
+        row.get("cooc", classOf[Integer]).intValue,
+        row.get("cosine", classOf[java.lang.Double]).doubleValue
+      )
+    }
 
   // --- pools (idempotent) ----------------------------------------------------
 

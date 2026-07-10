@@ -123,10 +123,22 @@ final class PostProjectionIT
     ) { conn =>
       Using.resource(conn.createStatement()) { st =>
         val _ = st.execute(
-          "TRUNCATE posts, tags, pools, pool_posts, " +
+          "TRUNCATE posts, tags, tag_cooccurrence, pools, pool_posts, " +
             "projection_offset_store, projection_timestamp_offset_store, projection_management"
         )
       }
+    }
+
+  /** Read a co-occurrence count directly (canonical pair order a < b). */
+  private def coCount(a: String, b: String): Int =
+    val (x, y) = if a < b then (a, b) else (b, a)
+    Using.resource(
+      DriverManager.getConnection(container.jdbcUrl, container.username, container.password)
+    ) { conn =>
+      val rs = conn
+        .createStatement()
+        .executeQuery(s"SELECT count FROM tag_cooccurrence WHERE tag_a = '$x' AND tag_b = '$y'")
+      if rs.next() then rs.getInt("count") else 0
     }
 
   "The post projection" should {
@@ -215,6 +227,10 @@ final class PostProjectionIT
           after.favCount shouldBe before.favCount
           after.width shouldBe before.width
           repo.tagPostCount("rebuild").futureValue shouldBe sharedCountBefore
+          // Co-occurrence must be REBUILT, not re-incremented on top of stale rows: rb1's one pair
+          // {gamma, rebuild} recovers to exactly 1 (a truncate that missed tag_cooccurrence would
+          // double it to 2).
+          coCount("gamma", "rebuild") shouldBe 1
         }
       }
     }
