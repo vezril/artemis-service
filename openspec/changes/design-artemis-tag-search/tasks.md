@@ -42,7 +42,7 @@ Dependency order: tag relationships → DSL parse (pure) → resolve/plan → SQ
 
 ## 5. Catalog API — search, facets, autocomplete (unblocks internals 5.1/5.4)
 
-- [ ] 5.1 (test) `GET /posts?tags=<DSL>&order=&cursor=` returns a keyset page of matching post summaries from the read model
-- [ ] 5.2 (test) `GET /posts/facets?tags=<DSL>` returns the tags across the matching posts, grouped by category with per-tag counts
-- [ ] 5.3 (test) `GET /tags/autocomplete?q=&context=tag|metatag` — trigram-backed, `post_count`-ranked, grammar-aware (mid-tag ⇒ tags with category + `alias_of`; mid-metatag ⇒ enum values)
-- [ ] 5.4 (impl) pekko-http routes wired to the DSL compiler + repository (extends `CatalogRoutes`)
+- [x] 5.1 (test) `GET /posts?tags=<DSL>&order=&cursor=` returns a keyset page of matching post summaries (via `SearchService`: parse→plan→execute; a search failure is a clean 400)
+- [x] 5.2 (test) `GET /posts/facets?tags=<DSL>` returns the tags across the matching posts, grouped by category with per-tag counts (`FacetExecutor` reuses `SqlCompiler.compileWhere` so facets can't drift from results)
+- [x] 5.3 (test) `GET /tags/autocomplete?q=&context=tag|metatag` — prefix match over the pg_trgm-indexed `tags`, `post_count`-ranked, `alias_of` via join; mid-metatag ⇒ `MetatagCatalog` enum values
+- [x] 5.4 (impl) `SearchRoutes` (own composable class, composed search-first) wired to `SearchService` + repo; a route test pins the search-first ordering so `/posts/facets` isn't captured by `/posts/{id}`

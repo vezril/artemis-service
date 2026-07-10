@@ -248,6 +248,42 @@ final class SqlCompilerSpec extends AnyWordSpec with Matchers with EitherValues:
     }
   }
 
+  // --- compileWhere (shared plan→WHERE for facets) ------------------------
+
+  "SqlCompiler.compileWhere" should {
+
+    "produce just the WHERE predicate — tag containment + status default, no ORDER BY/LIMIT" in {
+      val cq = SqlCompiler.compileWhere(plan(includes = Set("1girl"))).value
+      cq.sql should include("tags @>")
+      cq.sql should include("status <> 'deleted'")
+      cq.sql should not include "ORDER BY"
+      cq.sql should not include "LIMIT"
+      cq.sql should not include "SELECT"
+      cq.params should contain(SqlParam.TextArray(Seq("1girl")))
+    }
+
+    "carry metatag predicates and number placeholders from $1" in {
+      val cq = SqlCompiler
+        .compileWhere(
+          plan(includes = Set("a"), predicates = Seq(meta("score", Compare(Cmp.Gt, "10"))))
+        )
+        .value
+      cq.sql should include("score >")
+      cq.sql should include("$1")
+      cq.sql should not include "?"
+      cq.params should contain(SqlParam.IntP(10))
+    }
+
+    "surface an unsupported metatag as a Left rather than a WHERE" in {
+      SqlCompiler
+        .compileWhere(
+          plan(includes = Set("a"), predicates = Seq(meta("filesize", Compare(Cmp.Gt, "1"))))
+        )
+        .left
+        .value shouldBe UnsupportedMetatag("filesize")
+    }
+  }
+
   // --- injection-safety invariant -----------------------------------------
 
   "SqlCompiler placeholder numbering" should {

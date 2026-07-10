@@ -35,6 +35,25 @@ final case class PostRow(
 )
 
 /**
+ * One tag occurring across a query's matching posts: the tag name, its category, and the count of
+ * matches carrying it. Aggregated by [[me.cference.artemis.search.FacetExecutor]] for the gallery's
+ * tags-in-results panel (catalog-api "Tag facets for a query").
+ */
+final case class FacetEntry(name: String, category: Int, count: Int)
+
+/**
+ * One tag-name autocomplete suggestion: the trigram-matched name, its category (for the UI color),
+ * its `post_count` (the ranking key), and — when the name is an alias antecedent — the canonical
+ * consequent it rewrites to.
+ */
+final case class TagSuggestion(
+    name: String,
+    category: Int,
+    postCount: Int,
+    aliasOf: Option[String]
+)
+
+/**
  * Read model over PostgreSQL: idempotent upserts/updates applied by the projection handlers, and a
  * few read helpers for the ITs. Uses its own short-lived r2dbc connections (not the persistence
  * plugin's pool), so the read side is independent of the write side. Every handler write is
@@ -293,6 +312,21 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
   def selectPostRows(sql: String, bind: Statement => Statement): Future[Seq[PostRow]] =
     query(sql, bind)(mapPostRow)
 
+  /**
+   * Run a pre-compiled facet-aggregation SQL (from `FacetExecutor`) with its bound params and map
+   * each row to a [[FacetEntry]]. Kept search-agnostic like [[selectPostRows]]: the caller owns the
+   * SQL (built from `SqlCompiler.compileWhere`) and the binding; this only reuses the r2dbc
+   * plumbing. Columns expected: `name` (text), `category` (int), `cnt` (bigint from `COUNT(*)`).
+   */
+  def selectFacets(sql: String, bind: Statement => Statement): Future[Seq[FacetEntry]] =
+    query(sql, bind) { row =>
+      FacetEntry(
+        name = row.get("name", classOf[String]),
+        category = row.get("category", classOf[Integer]).intValue,
+        count = row.get("cnt", classOf[java.lang.Long]).intValue
+      )
+    }
+
   private def mapPostRow(row: Row): PostRow =
     PostRow(
       id = row.get("id", classOf[String]),
@@ -323,6 +357,38 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
         |LIMIT $2""".stripMargin,
       _.bind(0, likePattern).bind(1, Integer.valueOf(limit))
     )(row => row.get("name", classOf[String]))
+
+  /**
+   * Context-aware tag autocomplete (catalog-api task 5.3): prefix-match `tags.name` against `q`
+   * (index-friendly `q%` on the trigram-indexed column), rank most-populated first, and LEFT JOIN
+   * `tag_aliases` so an alias antecedent carries its canonical consequent. `q` is escaped for LIKE
+   * (its `_`/`%`/`\` are literalized) and bound as a param — never interpolated (injection-safe).
+   */
+  def autocompleteTags(q: String, limit: Int): Future[Seq[TagSuggestion]] =
+    query(
+      """SELECT t.name, t.category, t.post_count, a.consequent AS alias_of
+        |FROM tags t
+        |LEFT JOIN tag_aliases a ON a.antecedent = t.name
+        |WHERE t.name LIKE $1 ESCAPE '\'
+        |ORDER BY t.post_count DESC, t.name ASC
+        |LIMIT $2""".stripMargin,
+      _.bind(0, escapeLikePrefix(q)).bind(1, Integer.valueOf(limit))
+    ) { row =>
+      TagSuggestion(
+        name = row.get("name", classOf[String]),
+        category = row.get("category", classOf[Integer]).intValue,
+        postCount = row.get("post_count", classOf[Integer]).intValue,
+        aliasOf = Option(row.get("alias_of", classOf[String]))
+      )
+    }
+
+  /** Escape LIKE metacharacters in `q` and append `%` for a literal prefix match (`ESCAPE '\'`). */
+  private def escapeLikePrefix(q: String): String =
+    val escaped = q.iterator.flatMap {
+      case c @ ('_' | '%' | '\\') => s"\\$c"
+      case c => c.toString
+    }.mkString
+    s"$escaped%"
 
   def tagPostCount(name: String): Future[Int] =
     query("SELECT post_count FROM tags WHERE name = $1", _.bind(0, name)) { row =>
