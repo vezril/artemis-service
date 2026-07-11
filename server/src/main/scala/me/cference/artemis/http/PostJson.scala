@@ -70,6 +70,25 @@ object PostJson:
       case PostState.Deleted(pid, media, content) =>
         active(pid.value, "deleted", media, content)
 
+      case PostState.Purged(pid) =>
+        // Caller maps Purged to 404 before reaching here (the post is gone, media deleted);
+        // render defensively as a status-only shell.
+        PostResponse(
+          pid.value,
+          "purged",
+          Nil,
+          None,
+          0,
+          favorited = false,
+          None,
+          None,
+          None,
+          None,
+          None,
+          None,
+          None
+        )
+
   private def active(
       id: String,
       status: String,

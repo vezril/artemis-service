@@ -94,7 +94,8 @@ final class CatalogRoutes(
         (path(Segment) & get) { id =>
           val read: Future[PostState] = postFor(id).ask(PostEntity.Get(_))
           onSuccess(read) {
-            case PostState.Empty =>
+            // Never-created (Empty) and permanently purged posts are both a read 404.
+            case PostState.Empty | _: PostState.Purged =>
               complete(StatusCodes.NotFound -> ErrorResponse("post not found"))
             case state => complete(PostJson.render(id, state))
           }

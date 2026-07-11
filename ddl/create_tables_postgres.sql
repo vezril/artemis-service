@@ -133,6 +133,10 @@ CREATE TABLE IF NOT EXISTS posts (
   -- `SuggestionsRecorded`/`SuggestionsReviewed` domain events, so they rebuild by replay.
   needs_review BOOLEAN NOT NULL DEFAULT FALSE,
   suggestions JSONB NOT NULL DEFAULT '[]',
+  -- Soft-delete timestamp (deletion-lifecycle): set from the `PostDeleted` event's instant,
+  -- cleared on restore. The retention/auto-purge job selects `status = 'deleted'` rows whose
+  -- `deleted_at` is older than the retention window. Rebuilds by replay like every other column.
+  deleted_at  timestamp with time zone,
   created_at  timestamp with time zone NOT NULL
 );
 
@@ -144,6 +148,8 @@ CREATE INDEX IF NOT EXISTS posts_created_at_idx ON posts (created_at);
 CREATE INDEX IF NOT EXISTS posts_md5_idx ON posts (md5);
 -- Partial index: the review queue scans only the (small) needs-review set.
 CREATE INDEX IF NOT EXISTS posts_needs_review_idx ON posts (created_at) WHERE needs_review;
+-- Partial index: the retention/auto-purge job scans only soft-deleted rows by deletion age.
+CREATE INDEX IF NOT EXISTS posts_deleted_at_idx ON posts (deleted_at) WHERE status = 'deleted';
 
 -- tags: projection-maintained membership counts, trigram-indexed for autocomplete.
 -- `category` defaults to 0 (general); real category assignment arrives with the

@@ -114,10 +114,24 @@ object PostDomain:
             // Only a pending post can fail processing; an already-active post cannot.
             Left(DomainError.PostNotFound)
 
+          case _: Purge =>
+            // Purge is only valid on a soft-deleted post — an active post must be deleted first.
+            Left(DomainError.PostNotFound)
+
       case _: Deleted =>
         command match
           case Restore(at) => Right(Seq(PostRestored(at)))
+          // Retention reached: the soft-deleted post is permanently purged (blobs deleted 1:1 by
+          // the caller first). Only a Deleted post can be purged.
+          case Purge(at) => Right(Seq(PostPurged(at)))
           // Tombstone: every other command on a deleted post is rejected.
+          case _ => Left(DomainError.PostNotFound)
+
+      case _: Purged =>
+        command match
+          // Idempotent: re-purging an already-purged post is an accepted no-op (redelivery-safe).
+          case Purge(_) => Right(Seq.empty)
+          // Terminal: a purged post is gone and rejects every other command.
           case _ => Left(DomainError.PostNotFound)
 
       case _: Failed =>
@@ -153,6 +167,9 @@ object PostDomain:
 
       case (Deleted(id, media, content), PostRestored(_)) =>
         Active(id, media, content)
+
+      case (Deleted(id, _, _), PostPurged(_)) =>
+        Purged(id)
 
       case (Active(id, media, content), TagsChanged(tags, _)) =>
         Active(id, media, content.copy(tags = tags))
