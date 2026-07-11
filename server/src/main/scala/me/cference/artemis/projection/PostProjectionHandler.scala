@@ -43,6 +43,8 @@ final class PostProjectionHandler(repo: ReadModelRepository)(using ec: Execution
       case _: Favorited => repo.setFavorited(id, true)
       case _: Unfavorited => repo.setFavorited(id, false)
       case e: PossibleDuplicateFlagged => repo.setDuplicateOf(id, e.matchedPostId.value)
+      case e: SuggestionsRecorded => repo.setSuggestions(id, SuggestionJson.encode(e.suggestions))
+      case _: SuggestionsReviewed => repo.clearReview(id)
       case _: PostDeleted => repo.deletePost(id)
       case _: PostRestored => repo.restorePost(id)
     applied.map(_ => Done)

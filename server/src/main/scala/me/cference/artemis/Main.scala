@@ -4,7 +4,12 @@ import com.typesafe.config.ConfigFactory
 import me.cference.artemis.build.BuildInfo
 import me.cference.artemis.config.AppConfig
 import me.cference.artemis.grpc.ApolloObjectClient
-import me.cference.artemis.hermes.{HermesClient, HermesMediaJobPublisher, HermesMediaResultConsumer}
+import me.cference.artemis.hermes.{
+  HermesClient,
+  HermesMediaJobPublisher,
+  HermesMediaResultConsumer,
+  HermesTagJobPublisher
+}
 import me.cference.artemis.http.{
   CatalogRoutes,
   HealthRoutes,
@@ -12,6 +17,7 @@ import me.cference.artemis.http.{
   MediaRoutes,
   MetricsRoutes,
   RelatedTagsRoutes,
+  ReviewRoutes,
   SavedSearchRoutes,
   SearchRoutes,
   SimilarityRoutes,
@@ -22,6 +28,7 @@ import me.cference.artemis.ingest.{
   InMemoryProcessedJobs,
   MediaResultHandler,
   ReadModelNearDuplicates,
+  TagSuggestionHandler,
   UploadService
 }
 import me.cference.artemis.media.ApolloMediaSource
@@ -117,16 +124,22 @@ object Main:
     val hermesClient = new HermesClient(hermesCfg)
 
     // The consume spine: Hephaestus results → the sharded post entities (idempotent per jobId).
+    // On activation it also publishes a TagJob (auto-tagging) to Argus, best-effort.
     val resultHandler = new MediaResultHandler(
       new InMemoryProcessedJobs,
       postFor,
-      new ReadModelNearDuplicates(readModel, dedupCfg.hammingThreshold)
+      new ReadModelNearDuplicates(readModel, dedupCfg.hammingThreshold),
+      new HermesTagJobPublisher(hermesClient, hermesCfg.topicMediaTag)
     )
+    // Argus's suggestions → alias-merge → RecordSuggestions on the post (flags it for review).
+    val tagSuggestionHandler = new TagSuggestionHandler(postFor, graphCache.snapshot)
     val consumer = new HermesMediaResultConsumer(
       hermesClient,
       hermesCfg.subMediaProcessed,
       hermesCfg.subMediaFailed,
-      resultHandler
+      resultHandler,
+      tagSuggestionsSub = hermesCfg.subTagsSuggested,
+      tagHandler = tagSuggestionHandler.onSuggestions
     )
 
     // The upload spine: bytes → Apollo (content-addressed) → pending post → ProcessMediaJob.
@@ -159,6 +172,7 @@ object Main:
     val similarityService = new SimilarityService(readModel)
     val similarityRoutes =
       SimilarityRoutes(similarityService.similarTo, similarityService.reverseLookup)
+    val reviewRoutes = ReviewRoutes(readModel.reviewQueue, postFor)
     val apiRoutes: Route =
       HealthRoutes(BuildInfo.version, () => readiness.get()) ~
         MetricsRoutes(metrics) ~
@@ -168,7 +182,8 @@ object Main:
         uploadRoutes.routes ~
         savedSearchRoutes.routes ~
         relatedTagsRoutes.routes ~
-        similarityRoutes.routes
+        similarityRoutes.routes ~
+        reviewRoutes.routes
 
     HttpServer.bind(apiRoutes, httpCfg.host, httpCfg.port).onComplete {
       case Success(binding) =>

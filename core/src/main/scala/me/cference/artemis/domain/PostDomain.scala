@@ -87,6 +87,29 @@ object PostDomain:
             if content.duplicateOf.contains(matchedId) then Right(Seq.empty)
             else Right(Seq(PossibleDuplicateFlagged(matchedId, at)))
 
+          case RecordSuggestions(suggestions, at) =>
+            // Idempotent: recording the same set on an already-flagged post is a no-op (redelivery
+            // safe); otherwise replace the pending set and (re)raise the review flag.
+            if content.needsReview && content.suggestions == suggestions then Right(Seq.empty)
+            else Right(Seq(SuggestionsRecorded(suggestions, at)))
+
+          case AcceptSuggestions(accepted, at) =>
+            // Accept = a normal tag edit (union + canonicalize, so it flows through the alias graph
+            // and tag history like any edit) followed by clearing review. Emit `TagsChanged` only
+            // when the applied set actually changes, and `SuggestionsReviewed` only when there is a
+            // pending review to clear — so an accept that changes nothing on a reviewed post is a
+            // no-op.
+            val newTags = TagCanonicalization.canonicalize(content.tags ++ accepted, tagGraph)
+            val tagEvents =
+              if newTags != content.tags then Seq(TagsChanged(newTags, at)) else Seq.empty
+            val reviewEvents =
+              if content.needsReview then Seq(SuggestionsReviewed(at)) else Seq.empty
+            Right(tagEvents ++ reviewEvents)
+
+          case RejectSuggestions(at) =>
+            // Clear the review flag without applying anything; idempotent when not flagged.
+            if content.needsReview then Right(Seq(SuggestionsReviewed(at))) else Right(Seq.empty)
+
           case _: MarkFailed =>
             // Only a pending post can fail processing; an already-active post cannot.
             Left(DomainError.PostNotFound)
@@ -154,6 +177,13 @@ object PostDomain:
 
       case (Active(id, media, content), PossibleDuplicateFlagged(matchedId, _)) =>
         Active(id, media, content.copy(duplicateOf = Some(matchedId)))
+
+      case (Active(id, media, content), SuggestionsRecorded(suggestions, _)) =>
+        Active(id, media, content.copy(suggestions = suggestions, needsReview = true))
+
+      case (Active(id, media, content), SuggestionsReviewed(_)) =>
+        // Review done: drop the pending suggestions and leave the queue.
+        Active(id, media, content.copy(suggestions = Vector.empty, needsReview = false))
 
       // No other (state, event) pair is producible by `decide`; keep total.
       case (current, _) => current

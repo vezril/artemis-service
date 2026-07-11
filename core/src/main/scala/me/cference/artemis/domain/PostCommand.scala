@@ -68,3 +68,25 @@ object PostCommand:
    * matched id emits nothing; only an active post can be flagged.
    */
   final case class FlagPossibleDuplicate(matchedPostId: PostId, at: Instant) extends PostCommand
+
+  /**
+   * Record Argus's canonical tag suggestions (already alias-merged) for this active post, flagging
+   * it for review. Idempotent: re-recording an identical set on an already-flagged post emits
+   * nothing, so an at-least-once redelivery of `TagSuggestions` never re-journals.
+   */
+  final case class RecordSuggestions(suggestions: Vector[SuggestedTag], at: Instant)
+      extends PostCommand
+
+  /**
+   * Accept a reviewer's chosen tags (any tags — the suggested ones, edited, or added) by UNIONING
+   * them into the applied set and canonicalizing, then clearing the review flag. Emits a
+   * `TagsChanged` (only when the set actually changes) followed by `SuggestionsReviewed`.
+   * `accepted` empty means "apply nothing" — equivalent to a reject that still clears review.
+   */
+  final case class AcceptSuggestions(accepted: Set[Tag], at: Instant) extends PostCommand
+
+  /**
+   * Reject all pending suggestions: clear the review flag and empty the suggestion set without
+   * applying any tags. Idempotent: rejecting a post that isn't flagged emits nothing.
+   */
+  final case class RejectSuggestions(at: Instant) extends PostCommand

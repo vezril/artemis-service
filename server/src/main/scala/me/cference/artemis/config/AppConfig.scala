@@ -43,7 +43,9 @@ final case class HermesConfig(
     useTls: Boolean,
     topicMediaProcess: String,
     subMediaProcessed: String,
-    subMediaFailed: String
+    subMediaFailed: String,
+    topicMediaTag: String,
+    subTagsSuggested: String
 )
 
 /**
@@ -105,7 +107,9 @@ object AppConfig:
       useTls = hc.getBoolean("tls"),
       topicMediaProcess = hc.getString("topic-media-process"),
       subMediaProcessed = hc.getString("sub-media-processed"),
-      subMediaFailed = hc.getString("sub-media-failed")
+      subMediaFailed = hc.getString("sub-media-failed"),
+      topicMediaTag = hc.getString("topic-media-tag"),
+      subTagsSuggested = hc.getString("sub-tags-suggested")
     )
 
   def dedup(config: Config): DedupConfig =

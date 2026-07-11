@@ -167,6 +167,41 @@ final class PostProjectionIT
       }
     }
 
+    "project auto-tag review status and serve the review queue (auto-tagging 4.1/4.2)" in {
+      val id = PostId.unsafe("rev1")
+      send(id, CreatePost(id, md5, filetype, now))
+      send(id, RecordProcessed(dimensions, derivatives, phash, now))
+      send(
+        id,
+        RecordSuggestions(
+          Vector(
+            SuggestedTag(Tag.unsafe("cat_girl"), 0.9, "wd"),
+            SuggestedTag(Tag.unsafe("tree"), 0.6, "ram")
+          ),
+          now
+        )
+      )
+
+      runProjection {
+        eventually {
+          val queue = repo.reviewQueue(50).futureValue
+          val item = queue.find(_.postId == "rev1").getOrElse(fail("rev1 not in review queue"))
+          item.suggestions.map(_.tag) shouldBe Vector("cat_girl", "tree")
+          item.suggestions.head.confidence shouldBe 0.9
+          item.suggestions.head.source shouldBe "wd"
+        }
+      }
+
+      // Accepting reviews the post — it leaves the queue and the chosen tag is applied.
+      send(id, AcceptSuggestions(Set(Tag.unsafe("cat_girl")), now))
+      runProjection {
+        eventually {
+          repo.reviewQueue(50).futureValue.map(_.postId) should not contain "rev1"
+          repo.getPost("rev1").futureValue.map(_.tags).getOrElse(Nil) should contain("cat_girl")
+        }
+      }
+    }
+
     "maintain tags.post_count across posts gaining and losing a tag (3.2)" in {
       val a = PostId.unsafe("t-a")
       val b = PostId.unsafe("t-b")

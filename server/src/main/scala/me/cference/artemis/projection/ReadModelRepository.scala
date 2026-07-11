@@ -61,6 +61,16 @@ final case class TagSuggestion(
  */
 final case class RelatedTag(name: String, cooccurrence: Int, cosine: Double)
 
+/** One pending tag suggestion as projected into the read model for the review queue. */
+final case class SuggestionView(tag: String, confidence: Double, source: String)
+
+/**
+ * One post awaiting auto-tag review: its id and the pending canonical suggestions (highest
+ * confidence first, as merged). Served by [[ReadModelRepository.reviewQueue]] to the Muses review
+ * view for batch accept/reject.
+ */
+final case class ReviewItem(postId: String, suggestions: Vector[SuggestionView])
+
 /**
  * Read model over PostgreSQL: idempotent upserts/updates applied by the projection handlers, and a
  * few read helpers for the ITs. Uses its own short-lived r2dbc connections (not the persistence
@@ -194,6 +204,45 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
   def setDuplicateOf(id: String, matchedId: String): Future[Unit] =
     update("UPDATE posts SET duplicate_of = $2 WHERE id = $1", _.bind(0, id).bind(1, matchedId))
       .map(_ => ())
+
+  // --- auto-tagging review (idempotent) --------------------------------------
+
+  /**
+   * Record a post's pending suggestions and flag it for review (from `SuggestionsRecorded`).
+   * `suggestionsJson` is the canonical `[{tag,confidence,source}]` array. Idempotent: re-applying
+   * the same event sets the same rows.
+   */
+  def setSuggestions(id: String, suggestionsJson: String): Future[Unit] =
+    update(
+      "UPDATE posts SET needs_review = TRUE, suggestions = $2::jsonb WHERE id = $1",
+      _.bind(0, id).bind(1, suggestionsJson)
+    ).map(_ => ())
+
+  /** Clear the review flag and empty the pending suggestions (from `SuggestionsReviewed`). */
+  def clearReview(id: String): Future[Unit] =
+    update(
+      "UPDATE posts SET needs_review = FALSE, suggestions = '[]'::jsonb WHERE id = $1",
+      _.bind(0, id)
+    ).map(_ => ())
+
+  /**
+   * The auto-tag review queue: posts flagged `needs_review`, oldest first (batch review works
+   * front-to-back through the backlog), each with its pending canonical suggestions. `suggestions`
+   * is read as text and parsed — the JSON is the projection's own controlled output.
+   */
+  def reviewQueue(limit: Int): Future[Seq[ReviewItem]] =
+    query(
+      """SELECT id, suggestions::text AS suggestions FROM posts
+        |WHERE needs_review
+        |ORDER BY created_at ASC, id ASC
+        |LIMIT $1""".stripMargin,
+      _.bind(0, Integer.valueOf(limit))
+    ) { row =>
+      ReviewItem(
+        row.get("id", classOf[String]),
+        SuggestionJson.parse(row.get("suggestions", classOf[String]))
+      )
+    }
 
   /**
    * The `(id, phash)` pairs of active posts with a non-empty phash, excluding `excludeId`. Feeds

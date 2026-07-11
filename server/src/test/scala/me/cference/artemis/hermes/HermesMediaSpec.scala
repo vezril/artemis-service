@@ -85,6 +85,8 @@ final class HermesMediaSpec
             topic-media-process = "media.process"
             sub-media-processed = "artemis.media.processed"
             sub-media-failed = "artemis.media.failed"
+            topic-media-tag = "media.tag"
+            sub-tags-suggested = "artemis.media.tags.suggested"
           }"""
         )
         .resolve()
@@ -95,6 +97,8 @@ final class HermesMediaSpec
       cfg.topicMediaProcess shouldBe "media.process"
       cfg.subMediaProcessed shouldBe "artemis.media.processed"
       cfg.subMediaFailed shouldBe "artemis.media.failed"
+      cfg.topicMediaTag shouldBe "media.tag"
+      cfg.subTagsSuggested shouldBe "artemis.media.tags.suggested"
     }
   }
 
@@ -117,7 +121,9 @@ final class HermesMediaSpec
         useTls = false,
         topicMediaProcess = TopicProcess,
         subMediaProcessed = SubProcessed,
-        subMediaFailed = SubFailed
+        subMediaFailed = SubFailed,
+        topicMediaTag = "media.tag",
+        subTagsSuggested = "artemis.media.tags.suggested"
       )
     )
 
