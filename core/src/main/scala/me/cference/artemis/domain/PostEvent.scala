@@ -54,3 +54,20 @@ object PostEvent:
    * rebuildable by replay. `matchedPostId` is the existing post it resembles.
    */
   final case class PossibleDuplicateFlagged(matchedPostId: PostId, at: Instant) extends PostEvent
+
+  /**
+   * Argus's canonical tag suggestions were recorded for this post (auto-tagging), replacing any
+   * prior pending set and flagging the post for human review. The suggestions are NOT applied tags
+   * — they sit in a separate set until a reviewer accepts a subset. Carrying the full set (not a
+   * delta) keeps recording idempotent: an at-least-once redelivery of the same `TagSuggestions`
+   * re-records the same set rather than appending.
+   */
+  final case class SuggestionsRecorded(suggestions: Vector[SuggestedTag], at: Instant)
+      extends PostEvent
+
+  /**
+   * A human reviewed this post's pending suggestions — clearing the needs-review flag and emptying
+   * the suggestion set. When suggestions were accepted, a preceding `TagsChanged` carries the newly
+   * applied tags; a reject emits this alone. Either way the post leaves the review queue.
+   */
+  final case class SuggestionsReviewed(at: Instant) extends PostEvent

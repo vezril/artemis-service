@@ -127,6 +127,12 @@ CREATE TABLE IF NOT EXISTS posts (
   -- resembles (Hamming distance within threshold), or NULL if it looks unique. Set from the
   -- `PossibleDuplicateFlagged` domain event, so it rebuilds by replay.
   duplicate_of VARCHAR(255),
+  -- Auto-tagging review state (auto-tagging spec). `needs_review` puts the post in the review
+  -- queue when Argus's suggestions arrive; `suggestions` holds those pending canonical suggestions
+  -- as a JSON array of {"tag","confidence","source"}. Both are projected from the
+  -- `SuggestionsRecorded`/`SuggestionsReviewed` domain events, so they rebuild by replay.
+  needs_review BOOLEAN NOT NULL DEFAULT FALSE,
+  suggestions JSONB NOT NULL DEFAULT '[]',
   created_at  timestamp with time zone NOT NULL
 );
 
@@ -136,6 +142,8 @@ CREATE INDEX IF NOT EXISTS posts_rating_idx ON posts (rating);
 CREATE INDEX IF NOT EXISTS posts_status_idx ON posts (status);
 CREATE INDEX IF NOT EXISTS posts_created_at_idx ON posts (created_at);
 CREATE INDEX IF NOT EXISTS posts_md5_idx ON posts (md5);
+-- Partial index: the review queue scans only the (small) needs-review set.
+CREATE INDEX IF NOT EXISTS posts_needs_review_idx ON posts (created_at) WHERE needs_review;
 
 -- tags: projection-maintained membership counts, trigram-indexed for autocomplete.
 -- `category` defaults to 0 (general); real category assignment arrives with the

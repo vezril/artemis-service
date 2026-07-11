@@ -1,7 +1,7 @@
 package me.cference.artemis.ingest
 
 import apollostorage.grpc.{PutHeader, PutObjectResponse}
-import codex.messages.v1.ProcessMediaJob
+import codex.messages.v1.{ProcessMediaJob, TagJob}
 import me.cference.artemis.domain.{PerceptualHash, Phash}
 import me.cference.artemis.grpc.ApolloObjectClient
 import me.cference.artemis.projection.ReadModelRepository
@@ -21,6 +21,19 @@ import scala.concurrent.{ExecutionContext, Future}
 /** Publishes a `ProcessMediaJob` (later: to Hermes `media.process` as canonical JSON). */
 trait MediaJobPublisher:
   def publish(job: ProcessMediaJob): Future[Unit]
+
+/**
+ * Publishes a `TagJob` to Argus (Hermes `media.tag`) so it suggests tags for a just-activated
+ * post's sample derivative. The auto-tag publish ([[MediaResultHandler]]) is built against this
+ * seam so it unit-tests with a fake — no real Hermes needed.
+ */
+trait TagJobPublisher:
+  def publish(job: TagJob): Future[Unit]
+
+object TagJobPublisher:
+  /** No-op default so construction sites that don't auto-tag need no publisher dependency. */
+  val none: TagJobPublisher = new TagJobPublisher:
+    def publish(job: TagJob): Future[Unit] = Future.unit
 
 /**
  * The Apollo upload seam. Lets [[UploadService]] be unit-tested with a fake that can simulate a

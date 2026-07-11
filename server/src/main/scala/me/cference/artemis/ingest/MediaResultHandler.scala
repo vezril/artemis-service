@@ -1,6 +1,6 @@
 package me.cference.artemis.ingest
 
-import codex.messages.v1.{MediaFailed, MediaProcessed}
+import codex.messages.v1.{MediaFailed, MediaProcessed, TagJob}
 import me.cference.artemis.domain.PostCommand.{FlagPossibleDuplicate, MarkFailed, RecordProcessed}
 import me.cference.artemis.domain.{Derivative, Dimensions, Phash, PostCommand, PostId}
 import me.cference.artemis.persistence.PostEntity
@@ -28,7 +28,8 @@ import scala.util.control.NonFatal
 final class MediaResultHandler(
     processedJobs: ProcessedJobs,
     postFor: String => RecipientRef[PostEntity.Command],
-    nearDuplicates: NearDuplicates = NearDuplicates.none
+    nearDuplicates: NearDuplicates = NearDuplicates.none,
+    tagJobs: TagJobPublisher = TagJobPublisher.none
 )(using system: ActorSystem[?], timeout: Timeout):
 
   private given scala.concurrent.ExecutionContext = system.executionContext
@@ -44,8 +45,11 @@ final class MediaResultHandler(
           // Post-processing (option B): after the post is active, compare its phash against
           // existing posts and flag it if a near-duplicate is found. Inside the once(jobId) guard,
           // so redelivery of the same job never re-flags. A `None` match leaves the post unique.
+          // Then publish the TagJob (auto-tagging) — best-effort, decoupled, also inside the guard
+          // so a redelivered job never re-publishes.
           execute(m.postId, RecordProcessed(dims, derivatives(m), Phash(m.phash), now()))
             .flatMap(_ => bestEffortFlag(m))
+            .flatMap(_ => bestEffortPublishTagJob(m))
         }
 
   /**
@@ -72,6 +76,52 @@ final class MediaResultHandler(
         execute(m.postId, FlagPossibleDuplicate(PostId.unsafe(matchedId), now()))
       case None => Future.successful(Done)
     }
+
+  /**
+   * Publish the auto-tag job for the just-activated post. Best-effort like [[bestEffortFlag]]: a
+   * publish failure (Hermes momentarily down) degrades to "not tagged" rather than failing
+   * `onProcessed` and wedging the job in redelivery. Skips silently when there is no `sample`
+   * derivative to tag.
+   *
+   * Caveat: this runs inside the `once(jobId)` guard, so a recovered publish failure still marks
+   * the job applied — a redelivered `MediaProcessed` will NOT re-attempt the publish. A `TagJob`
+   * lost to a Hermes-publish failure is therefore permanent (the post stays active-and-unreviewed),
+   * unlike an Argus outage where Hermes buffers the already-published job. Acceptable while
+   * auto-tagging is best-effort; a durable retry would move the publish out of the guard (at the
+   * cost of duplicate jobs on redelivery) or drive it off the read model.
+   */
+  private def bestEffortPublishTagJob(m: MediaProcessed): Future[Done] =
+    tagJobOf(m) match
+      case None =>
+        log.debug("no sample derivative for post {} (job {}); skipping tag-job", m.postId, m.jobId)
+        Future.successful(Done)
+      case Some(job) =>
+        tagJobs
+          .publish(job)
+          .map(_ => Done)
+          .recover { case NonFatal(e) =>
+            log.warn(
+              "tag-job publish failed for post {} (job {}): {}",
+              m.postId,
+              m.jobId,
+              e.getMessage
+            )
+            Done
+          }
+
+  /**
+   * Build the `TagJob` from the processed result: the `sample` derivative's Apollo ref (Argus reads
+   * the small sample, never the original) and a coarse media type (video when a duration is
+   * present, else image). `None` when no sample derivative was produced.
+   */
+  private def tagJobOf(m: MediaProcessed): Option[TagJob] =
+    m.derivatives
+      .find(_.kind == "sample")
+      .flatMap(_.ref)
+      .map(ref => TagJob(postId = m.postId, sample = Some(ref), mediaType = mediaTypeOf(m)))
+
+  private def mediaTypeOf(m: MediaProcessed): String =
+    if m.metadata.flatMap(_.durationSeconds).isDefined then "video" else "image"
 
   def onFailed(m: MediaFailed): Future[Unit] =
     once(m.jobId) {

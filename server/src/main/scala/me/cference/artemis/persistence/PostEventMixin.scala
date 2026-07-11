@@ -26,6 +26,14 @@ import me.cference.artemis.domain.PostEvent
     new JsonSubTypes.Type(
       value = classOf[PostEvent.PossibleDuplicateFlagged],
       name = "PossibleDuplicateFlagged"
+    ),
+    new JsonSubTypes.Type(
+      value = classOf[PostEvent.SuggestionsRecorded],
+      name = "SuggestionsRecorded"
+    ),
+    new JsonSubTypes.Type(
+      value = classOf[PostEvent.SuggestionsReviewed],
+      name = "SuggestionsReviewed"
     )
   )
 )

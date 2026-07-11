@@ -176,7 +176,9 @@ final class RunnableServiceE2EIT
         useTls = false,
         topicMediaProcess = TopicProcess,
         subMediaProcessed = SubProcessed,
-        subMediaFailed = SubFailed
+        subMediaFailed = SubFailed,
+        topicMediaTag = "media.tag",
+        subTagsSuggested = "artemis.media.tags.suggested"
       )
     )(using testKit.system)
 

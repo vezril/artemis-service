@@ -1,6 +1,6 @@
 package me.cference.artemis.hermes
 
-import codex.messages.v1.{MediaFailed, MediaProcessed}
+import codex.messages.v1.{MediaFailed, MediaProcessed, TagSuggestions}
 import me.cference.artemis.ingest.MediaResultHandler
 import me.cference.artemis.messages.MediaMessages
 import me.cference.hermesmq.grpc.{AckRequest, PullRequest, PulledMessage}
@@ -30,17 +30,26 @@ final class HermesMediaResultConsumer(
     processedSub: String,
     failedSub: String,
     handler: MediaResultHandler,
-    maxMessages: Int = 100
+    maxMessages: Int = 100,
+    tagSuggestionsSub: String = "",
+    tagHandler: TagSuggestions => Future[Unit] = _ => Future.unit
 )(using ec: ExecutionContext):
 
   private val log = LoggerFactory.getLogger(getClass)
 
-  /** Pull + handle + ack one batch from each subscription; returns the number of messages acked. */
+  /**
+   * Pull + handle + ack one batch from each subscription; returns the number of messages acked. The
+   * tag-suggestions subscription (Argus → auto-tagging) rides the same at-least-once discipline and
+   * is only drained when configured (`tagSuggestionsSub` non-empty).
+   */
   def pollOnce(): Future[Int] =
     for
       processed <- drain[MediaProcessed](processedSub, handler.onProcessed)
       failed <- drain[MediaFailed](failedSub, handler.onFailed)
-    yield processed + failed
+      tags <-
+        if tagSuggestionsSub.isEmpty then Future.successful(0)
+        else drain[TagSuggestions](tagSuggestionsSub, tagHandler)
+    yield processed + failed + tags
 
   /**
    * Pull up to `maxMessages` from `subscription`, decode each into `A`, run `handle`, and ack the

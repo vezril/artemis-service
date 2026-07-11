@@ -6,7 +6,8 @@ import codex.messages.v1.{
   MediaFailed,
   MediaMetadata,
   MediaProcessed,
-  ObjectRef
+  ObjectRef,
+  TagJob
 }
 import com.typesafe.config.ConfigFactory
 import me.cference.artemis.domain.PostCommand.CreatePost
@@ -91,6 +92,28 @@ final class MediaResultHandlerSpec
         WireDerivative(kind = "thumb", ref = Some(ObjectRef("media", s"$postId/thumb.webp")))
       ),
       specVersion = 1
+    )
+
+  /** A processed result carrying a `sample` derivative (what auto-tagging publishes to Argus). */
+  private def processedWithSample(
+      jobId: String,
+      postId: String,
+      duration: Option[Double] = None
+  ): MediaProcessed =
+    processed(jobId, postId, 800, 600).copy(
+      metadata = Some(
+        MediaMetadata(
+          width = 800,
+          height = 600,
+          durationSeconds = duration,
+          md5 = "abc",
+          filetype = "png"
+        )
+      ),
+      derivatives = Seq(
+        WireDerivative(kind = "thumb", ref = Some(ObjectRef("media", s"$postId/thumb.webp"))),
+        WireDerivative(kind = "sample", ref = Some(ObjectRef("media", s"$postId/sample.webp")))
+      )
     )
 
   private def failed(jobId: String, postId: String, message: String): MediaFailed =
@@ -195,6 +218,59 @@ final class MediaResultHandlerSpec
     }
   }
 
+  "MediaResultHandler auto-tag publish" should {
+
+    "publish a TagJob for the sample derivative when a post activates" in {
+      val jobs = new InMemoryProcessedJobs
+      val tagJobs = new RecordingTagJobs
+      val handler = new MediaResultHandler(jobs, postFor, NearDuplicates.none, tagJobs)
+      createPending("tj1")
+
+      handler.onProcessed(processedWithSample("j-tj1", "tj1")).futureValue
+
+      val published = tagJobs.published
+      published.map(_.postId) shouldBe Seq("tj1")
+      published.head.sample.map(_.`object`) shouldBe Some("tj1/sample.webp")
+      published.head.mediaType shouldBe "image" // no duration → image
+    }
+
+    "mark a TagJob for a post with a duration as video" in {
+      val tagJobs = new RecordingTagJobs
+      val handler =
+        new MediaResultHandler(new InMemoryProcessedJobs, postFor, NearDuplicates.none, tagJobs)
+      createPending("tj2")
+
+      handler.onProcessed(processedWithSample("j-tj2", "tj2", duration = Some(12.0))).futureValue
+
+      tagJobs.published.head.mediaType shouldBe "video"
+    }
+
+    "not publish when no sample derivative is present, but still activate" in {
+      val tagJobs = new RecordingTagJobs
+      val handler =
+        new MediaResultHandler(new InMemoryProcessedJobs, postFor, NearDuplicates.none, tagJobs)
+      createPending("tj3")
+
+      // The default `processed` helper carries only a thumb derivative — no sample.
+      handler.onProcessed(processed("j-tj3", "tj3", 800, 600)).futureValue
+
+      tagJobs.published shouldBe empty
+      getState("tj3") shouldBe a[PostState.Active]
+    }
+
+    "activate and complete even if the tag-job publish fails (best-effort)" in {
+      val jobs = new InMemoryProcessedJobs
+      val handler =
+        new MediaResultHandler(jobs, postFor, NearDuplicates.none, new FailingTagJobs)
+      createPending("tj4")
+
+      handler.onProcessed(processedWithSample("j-tj4", "tj4")).futureValue // does NOT fail
+
+      getState("tj4") shouldBe a[PostState.Active]
+      jobs.isApplied("j-tj4").futureValue shouldBe true
+    }
+  }
+
   "MediaResultHandler.onFailed" should {
 
     "drive a pending post to failed" in {
@@ -262,3 +338,16 @@ final class MediaResultHandlerSpec
   final private class FakeNearDuplicates(result: Option[String]) extends NearDuplicates:
     def findNear(phash: String, excludeId: String): Future[Option[String]] =
       Future.successful(result)
+
+  /** A tag-job publisher that records what was published, for asserting the auto-tag wiring. */
+  final private class RecordingTagJobs extends TagJobPublisher:
+    @volatile private var jobs: Vector[TagJob] = Vector.empty
+    def published: Seq[TagJob] = jobs
+    def publish(job: TagJob): Future[Unit] =
+      synchronized { jobs = jobs :+ job }
+      Future.unit
+
+  /** A publisher that always errors — stands in for a momentary Hermes outage. */
+  final private class FailingTagJobs extends TagJobPublisher:
+    def publish(job: TagJob): Future[Unit] =
+      Future.failed(new RuntimeException("hermes unavailable"))
