@@ -35,7 +35,8 @@ import scala.util.control.NonFatal
  */
 final class TagSuggestionHandler(
     postFor: String => RecipientRef[PostEntity.Command],
-    tagGraph: () => TagGraph
+    tagGraph: () => TagGraph,
+    taggerVersion: Int = 0
 )(using system: ActorSystem[?], timeout: Timeout):
 
   private given scala.concurrent.ExecutionContext = system.executionContext
@@ -50,7 +51,7 @@ final class TagSuggestionHandler(
     else
       postFor(m.postId)
         .askWithStatus[org.apache.pekko.Done](
-          PostEntity.Execute(RecordSuggestions(merged, Instant.now()), _)
+          PostEntity.Execute(RecordSuggestions(merged, Instant.now(), taggerVersion), _)
         )
         .map(_ => ())
         .recoverWith { case NonFatal(cause) => onRecordFailure(m.postId, cause) }

@@ -47,7 +47,10 @@ final class MediaResultHandler(
           // so redelivery of the same job never re-flags. A `None` match leaves the post unique.
           // Then publish the TagJob (auto-tagging) — best-effort, decoupled, also inside the guard
           // so a redelivered job never re-publishes.
-          execute(m.postId, RecordProcessed(dims, derivatives(m), Phash(m.phash), now()))
+          execute(
+            m.postId,
+            RecordProcessed(dims, derivatives(m), Phash(m.phash), now(), m.specVersion)
+          )
             .flatMap(_ => bestEffortFlag(m))
             .flatMap(_ => bestEffortPublishTagJob(m))
         }

@@ -18,6 +18,7 @@ import me.cference.artemis.http.{
   MediaRoutes,
   MetricsRoutes,
   RelatedTagsRoutes,
+  ReprocessRoutes,
   ReviewRoutes,
   SavedSearchRoutes,
   SearchRoutes,
@@ -41,6 +42,7 @@ import me.cference.artemis.persistence.{
   SavedSearchesSharding
 }
 import me.cference.artemis.projection.{PoolProjection, PostProjection, ReadModelRepository}
+import me.cference.artemis.reprocess.ReprocessService
 import me.cference.artemis.search.{
   FacetExecutor,
   ReadModelWildcardExpander,
@@ -91,6 +93,7 @@ object Main:
     val hermesCfg = AppConfig.hermes(config)
     val dedupCfg = AppConfig.dedup(config)
     val gcCfg = AppConfig.gc(config)
+    val reprocessCfg = AppConfig.reprocess(config)
     val runtimeCfg = AppConfig.runtime(config)
 
     given system: ActorSystem[Nothing] =
@@ -133,8 +136,10 @@ object Main:
       new ReadModelNearDuplicates(readModel, dedupCfg.hammingThreshold),
       new HermesTagJobPublisher(hermesClient, hermesCfg.topicMediaTag)
     )
-    // Argus's suggestions → alias-merge → RecordSuggestions on the post (flags it for review).
-    val tagSuggestionHandler = new TagSuggestionHandler(postFor, graphCache.snapshot)
+    // Argus's suggestions → alias-merge → RecordSuggestions on the post (flags it for review),
+    // stamping the current tagger version so a re-tag reprocess can find stale posts.
+    val tagSuggestionHandler =
+      new TagSuggestionHandler(postFor, graphCache.snapshot, reprocessCfg.taggerVersion)
     val consumer = new HermesMediaResultConsumer(
       hermesClient,
       hermesCfg.subMediaProcessed,
@@ -187,6 +192,36 @@ object Main:
     val similarityRoutes =
       SimilarityRoutes(similarityService.similarTo, similarityService.reverseLookup)
     val reviewRoutes = ReviewRoutes(readModel.reviewQueue, postFor)
+
+    // The manual reprocess orchestrator: resolve a selection (stale/id/DSL) and enqueue backfill
+    // jobs to the lower-priority reprocess lanes. A DSL selection resolves through the search
+    // service (one capped page); a bad query fails the Future → the route answers 400.
+    val searchIds: String => Future[Seq[String]] = query =>
+      searchService.search(query, None, None, reprocessCfg.maxSelect).map {
+        case Right(page) =>
+          if page.rows.sizeIs >= reprocessCfg.maxSelect then
+            log.warn(
+              "reprocess selection '{}' hit the max-select cap ({}); only the first page was " +
+                "enqueued — narrow the query or raise artemis.reprocess.max-select",
+              query,
+              Integer.valueOf(reprocessCfg.maxSelect)
+            )
+          page.rows.map(_.id)
+        case Left(err) => throw new IllegalArgumentException(err.message)
+      }
+    val reprocessService = new ReprocessService(
+      stalePostIds = readModel.stalePostIds(_, _, reprocessCfg.maxSelect),
+      searchIds = searchIds,
+      infoFor = readModel.reprocessInfo,
+      publishProcessJob =
+        new HermesMediaJobPublisher(hermesClient, reprocessCfg.topicReprocess).publish,
+      publishTagJob =
+        new HermesTagJobPublisher(hermesClient, reprocessCfg.topicTagReprocess).publish,
+      currentDerivativeVersion = reprocessCfg.derivativeSpecVersion,
+      currentTaggerVersion = reprocessCfg.taggerVersion
+    )
+    val reprocessRoutes = ReprocessRoutes(reprocessService.reprocess)
+
     val apiRoutes: Route =
       HealthRoutes(BuildInfo.version, () => readiness.get()) ~
         MetricsRoutes(metrics) ~
@@ -197,7 +232,8 @@ object Main:
         savedSearchRoutes.routes ~
         relatedTagsRoutes.routes ~
         similarityRoutes.routes ~
-        reviewRoutes.routes
+        reviewRoutes.routes ~
+        reprocessRoutes.routes
 
     HttpServer.bind(apiRoutes, httpCfg.host, httpCfg.port).onComplete {
       case Success(binding) =>

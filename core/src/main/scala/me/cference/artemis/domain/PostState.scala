@@ -26,7 +26,8 @@ final case class PostMedia(
     filetype: Filetype,
     dimensions: Dimensions,
     derivatives: Vector[Derivative],
-    phash: Phash
+    phash: Phash,
+    derivativeSpecVersion: Int = 0
 )
 
 /**
@@ -47,7 +48,8 @@ final case class PostContent(
     source: Option[String] = None,
     duplicateOf: Option[PostId] = None,
     suggestions: Vector[SuggestedTag] = Vector.empty,
-    needsReview: Boolean = false
+    needsReview: Boolean = false,
+    taggerVersion: Int = 0
 )
 
 object PostContent:
