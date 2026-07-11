@@ -35,6 +35,14 @@ object PostCommand:
   final case class Restore(at: Instant) extends PostCommand
 
   /**
+   * Permanently purge a soft-deleted post after its retention window (deletion-lifecycle). Valid
+   * only on a `Deleted` post — the lifecycle is soft-delete → retention → purge; the caller (the
+   * retention job) deletes the post's blobs 1:1 before issuing this. Idempotent: purging an
+   * already-purged post is an accepted no-op.
+   */
+  final case class Purge(at: Instant) extends PostCommand
+
+  /**
    * Set the post's tag set to `tags`. The decider canonicalizes this request (alias rewrite →
    * transitive implication expansion → dedup) against the supplied [[TagGraph]] before emitting
    * `TagsChanged`, so only the canonical set is journaled.

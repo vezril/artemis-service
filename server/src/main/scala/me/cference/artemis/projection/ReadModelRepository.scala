@@ -72,6 +72,14 @@ final case class SuggestionView(tag: String, confidence: Double, source: String)
 final case class ReviewItem(postId: String, suggestions: Vector[SuggestionView])
 
 /**
+ * A soft-deleted post due for purge: its id and the EXACT Apollo object keys (within the media
+ * bucket) to delete 1:1 — the reconstructed original plus the derivative keys read back from the
+ * post's projected `derivatives`. Carrying the real keys (not a guessed prefix) means purge never
+ * depends on Hephaestus's derivative-key layout.
+ */
+final case class PurgeTarget(id: String, blobKeys: Seq[String])
+
+/**
  * Read model over PostgreSQL: idempotent upserts/updates applied by the projection handlers, and a
  * few read helpers for the ITs. Uses its own short-lived r2dbc connections (not the persistence
  * plugin's pool), so the read side is independent of the write side. Every handler write is
@@ -83,6 +91,26 @@ object ReadModelRepository:
   val PostColumns: String =
     "id, tags, status, score, fav_count, rating, width, height, duration, parent_id, " +
       "duplicate_of, created_at"
+
+  /**
+   * Parse the derivative object keys (within the media bucket) from the projected `derivatives`
+   * JSON (`[{"kind":...,"ref":"<bucket>/<object>"}]`). The stored `ref` is `bucket/object`, so the
+   * object is everything after the first `/`. Total: a malformed/absent element is skipped, so
+   * purge never throws over a legacy row.
+   */
+  def derivativeObjectKeys(derivativesJson: String): Seq[String] =
+    import spray.json.*
+    derivativesJson.parseJson match
+      case JsArray(elems) =>
+        elems.flatMap {
+          case JsObject(fields) =>
+            fields.get("ref").collect {
+              case JsString(ref) if ref.contains('/') =>
+                ref.substring(ref.indexOf('/') + 1)
+            }
+          case _ => None
+        }
+      case _ => Seq.empty
 
 final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext):
 
@@ -156,7 +184,7 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
    * redelivery of the same `PostDeleted` is a no-op (same guard trick as `fav_count`). `ChangeTags`
    * is rejected on a deleted post by the domain, so counts can't drift while deleted.
    */
-  def deletePost(id: String): Future[Unit] =
+  def deletePost(id: String, deletedAt: Instant): Future[Unit] =
     postStatusAndTags(id).flatMap {
       case Some((status, tags)) if status != "deleted" =>
         for
@@ -164,7 +192,10 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
           _ <- sequentially(pairsOf(tags.toSet).toSeq)(
             decrementPair
           ) // drop the post's co-occurrence
-          _ <- setStatus(id, "deleted")
+          _ <- update(
+            "UPDATE posts SET status = 'deleted', deleted_at = $2 WHERE id = $1",
+            _.bind(0, id).bind(1, deletedAt.atOffset(ZoneOffset.UTC))
+          )
         yield ()
       case _ => Future.successful(()) // already deleted or absent: no-op
     }
@@ -176,10 +207,67 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
         for
           _ <- sequentially(tags)(incrementTagCount)
           _ <- sequentially(pairsOf(tags.toSet).toSeq)(incrementPair)
-          _ <- setStatus(id, "active")
+          _ <- update(
+            "UPDATE posts SET status = 'active', deleted_at = NULL WHERE id = $1",
+            _.bind(0, id)
+          )
         yield ()
       case _ => Future.successful(()) // already active or absent: no-op
     }
+
+  // --- deduplicated ingest + purge (deletion-lifecycle) ----------------------
+
+  /**
+   * The id + status of the (at most one) non-purged post carrying `md5`, for the upload dedup
+   * branch (merge on a live match, restore on a soft-deleted match, create when absent). Purged
+   * posts have no row, so a purged md5 correctly reads as absent → a fresh upload.
+   */
+  def findByMd5(md5: String): Future[Option[(String, String)]] =
+    query(
+      "SELECT id, status FROM posts WHERE md5 = $1 ORDER BY created_at DESC LIMIT 1",
+      _.bind(0, md5)
+    )(row => (row.get("id", classOf[String]), row.get("status", classOf[String]))).map(_.headOption)
+
+  /**
+   * Soft-deleted posts whose `deleted_at` is older than `cutoff` — the retention/auto-purge job's
+   * work list, each with the EXACT blob keys to delete 1:1: the reconstructed original
+   * (`originals/<md5[:2]>/<md5>.<ext>`, mirroring `UploadService.originalKey`) plus the derivative
+   * object keys parsed from the projected `derivatives` (stripping the bucket prefix). Reading the
+   * real derivative keys avoids guessing Hephaestus's key layout.
+   */
+  def softDeletedBefore(cutoff: Instant): Future[Seq[PurgeTarget]] =
+    query(
+      """SELECT id, md5, filetype, derivatives::text AS derivatives FROM posts
+        |WHERE status = 'deleted' AND deleted_at IS NOT NULL AND deleted_at < $1
+        |ORDER BY deleted_at ASC""".stripMargin,
+      _.bind(0, cutoff.atOffset(ZoneOffset.UTC))
+    ) { row =>
+      val md5 = row.get("md5", classOf[String])
+      val ext = Option(row.get("filetype", classOf[String]))
+        .flatMap(_.split('/').lastOption)
+        .filter(_.nonEmpty)
+        .getOrElse("bin")
+      val originalKey = s"originals/${md5.take(2)}/$md5.$ext"
+      val derivativeKeys =
+        ReadModelRepository.derivativeObjectKeys(row.get("derivatives", classOf[String]))
+      PurgeTarget(row.get("id", classOf[String]), originalKey +: derivativeKeys)
+    }
+
+  /**
+   * Every md5 still referenced by a post (any non-purged status, including `pending` in-flight
+   * uploads) — the orphan sweep's protected set: a blob whose md5 is here is NOT debris.
+   */
+  def referencedMd5s(): Future[Set[String]] =
+    query("SELECT DISTINCT md5 FROM posts WHERE md5 IS NOT NULL", identity)(
+      _.get("md5", classOf[String])
+    ).map(_.toSet)
+
+  /**
+   * Remove a purged post's read-model row (from `PostPurged`). The tag/co-occurrence counts were
+   * already decremented at soft-delete, so this only drops the now-orphan row.
+   */
+  def purgePost(id: String): Future[Unit] =
+    update("DELETE FROM posts WHERE id = $1", _.bind(0, id)).map(_ => ())
 
   private def postStatusAndTags(id: String): Future[Option[(String, Seq[String])]] =
     query("SELECT status, tags FROM posts WHERE id = $1", _.bind(0, id)) { row =>

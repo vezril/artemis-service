@@ -16,6 +16,7 @@ import me.cference.artemis.domain.PostEvent
     new JsonSubTypes.Type(value = classOf[PostEvent.ProcessingFailed], name = "ProcessingFailed"),
     new JsonSubTypes.Type(value = classOf[PostEvent.PostDeleted], name = "PostDeleted"),
     new JsonSubTypes.Type(value = classOf[PostEvent.PostRestored], name = "PostRestored"),
+    new JsonSubTypes.Type(value = classOf[PostEvent.PostPurged], name = "PostPurged"),
     new JsonSubTypes.Type(value = classOf[PostEvent.TagsChanged], name = "TagsChanged"),
     new JsonSubTypes.Type(value = classOf[PostEvent.RatingChanged], name = "RatingChanged"),
     new JsonSubTypes.Type(value = classOf[PostEvent.ParentSet], name = "ParentSet"),

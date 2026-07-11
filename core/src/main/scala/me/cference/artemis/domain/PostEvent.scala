@@ -28,6 +28,14 @@ object PostEvent:
   final case class PostRestored(at: Instant) extends PostEvent
 
   /**
+   * The post was permanently purged after its retention window (deletion-lifecycle). Terminal: the
+   * read-model row is removed and the post's blobs are deleted 1:1. Journaled (not a read-side
+   * side-write) so the purge is replayable — a replayed journal folds the post to `Purged` and the
+   * projection removes its row, keeping the read model rebuildable.
+   */
+  final case class PostPurged(at: Instant) extends PostEvent
+
+  /**
    * The canonical tag set now in force. The ordered sequence of these events IS the post's tag-edit
    * history — each carries the full canonical set at that point, recoverable by replay with no
    * external lookup.

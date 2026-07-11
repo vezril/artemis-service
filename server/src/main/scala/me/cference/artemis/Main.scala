@@ -3,6 +3,7 @@ package me.cference.artemis
 import com.typesafe.config.ConfigFactory
 import me.cference.artemis.build.BuildInfo
 import me.cference.artemis.config.AppConfig
+import me.cference.artemis.gc.{ApolloBlobStore, PurgeService}
 import me.cference.artemis.grpc.ApolloObjectClient
 import me.cference.artemis.hermes.{
   HermesClient,
@@ -89,6 +90,7 @@ object Main:
     val apolloCfg = AppConfig.apollo(config)
     val hermesCfg = AppConfig.hermes(config)
     val dedupCfg = AppConfig.dedup(config)
+    val gcCfg = AppConfig.gc(config)
     val runtimeCfg = AppConfig.runtime(config)
 
     given system: ActorSystem[Nothing] =
@@ -142,12 +144,23 @@ object Main:
       tagHandler = tagSuggestionHandler.onSuggestions
     )
 
-    // The upload spine: bytes → Apollo (content-addressed) → pending post → ProcessMediaJob.
+    // The upload spine: bytes → Apollo (content-addressed) → dedup on md5 (merge/restore/create).
     val uploadService = new UploadService(
       new ApolloObjectUploader(apolloClient),
       new HermesMediaJobPublisher(hermesClient, hermesCfg.topicMediaProcess),
-      postFor
+      postFor,
+      readModel.findByMd5
     )
+
+    // The deletion-lifecycle auto-purge job: soft-deleted posts past retention → delete blobs 1:1
+    // + purge. Driven on a schedule once dependencies are ready.
+    val purgeService =
+      new PurgeService(
+        readModel.softDeletedBefore,
+        new ApolloBlobStore(apolloClient, "media"),
+        postFor,
+        gcCfg.retention
+      )
 
     // The read surface: DSL search + facets over the read model, alias-resolving against the cache.
     val searchService = new SearchService(
@@ -166,7 +179,8 @@ object Main:
     )
     val catalogRoutes = CatalogRoutes(postFor, poolFor)
     val mediaRoutes = MediaRoutes(new ApolloMediaSource(apolloClient))
-    val uploadRoutes = UploadRoutes(uploadService.upload)
+    // Adapt the upload seam to the route's 3-arg shape (dedup metadata-merge params default empty).
+    val uploadRoutes = UploadRoutes((bytes, ct, mt) => uploadService.upload(bytes, ct, mt))
     val savedSearchRoutes = SavedSearchRoutes(savedSearchesRef, searchService.search)
     val relatedTagsRoutes = RelatedTagsRoutes(readModel.relatedTags)
     val similarityService = new SimilarityService(readModel)
@@ -196,9 +210,11 @@ object Main:
         awaitDependenciesThenServe(
           pgCfg,
           runtimeCfg,
+          gcCfg,
           graphCache,
           readModel,
           consumer,
+          purgeService,
           metrics,
           readiness
         )
@@ -216,9 +232,11 @@ object Main:
   private def awaitDependenciesThenServe(
       pgCfg: me.cference.artemis.config.PostgresConfig,
       runtimeCfg: me.cference.artemis.config.RuntimeConfig,
+      gcCfg: me.cference.artemis.config.GcConfig,
       graphCache: TagGraphCache,
       readModel: ReadModelRepository,
       consumer: HermesMediaResultConsumer,
+      purgeService: PurgeService,
       metrics: MetricsRegistry,
       readiness: AtomicBoolean
   )(using system: ActorSystem[Nothing]): Unit =
@@ -238,6 +256,7 @@ object Main:
         startProjections(readModel, runtimeCfg.projectionInstances)
         val _ = graphCache.startScheduledRefresh(runtimeCfg.tagGraphRefresh)
         startConsumeLoop(consumer, metrics, runtimeCfg.consumeInterval, readiness)
+        startPurgeLoop(purgeService, gcCfg.purgeInterval)
         readiness.set(true)
         log.info("Postgres ready, tag graph loaded — Artemis is UP")
       case Failure(ex) =>
@@ -309,3 +328,35 @@ object Main:
       readiness.set(false)
       log.error("consume loop terminated unexpectedly ({}); readiness withdrawn", outcome)
     }
+
+  /**
+   * Drive the deletion-lifecycle auto-purge on a repeating tick: each pass purges soft-deleted
+   * posts past their retention window (deleting blobs 1:1). A pass failure is logged and the loop
+   * keeps ticking (a bad pass just retries next interval); `RestartSource` heals a stream-stage
+   * failure. Unlike the consume loop, a terminated purge loop does not withdraw readiness — GC is
+   * background housekeeping, not a serving dependency, so failing it must not flip `/health` DOWN.
+   */
+  private def startPurgeLoop(purgeService: PurgeService, interval: FiniteDuration)(using
+      system: ActorSystem[?]
+  ): Unit =
+    import system.executionContext
+    val restartSettings =
+      RestartSettings(minBackoff = 5.seconds, maxBackoff = 5.minutes, randomFactor = 0.2)
+    val _ = RestartSource
+      .onFailuresWithBackoff(restartSettings) { () =>
+        Source
+          .tick(interval, interval, ())
+          .mapAsync(1) { _ =>
+            purgeService
+              .purgeDue(java.time.Instant.now())
+              .map { purged =>
+                if purged > 0 then log.info("auto-purge: purged {} post(s) past retention", purged)
+                purged
+              }
+              .recover { case ex =>
+                log.warn("purge-loop pass failed ({}); continuing", ex.getMessage)
+                0
+              }
+          }
+      }
+      .runWith(Sink.ignore)

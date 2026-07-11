@@ -205,7 +205,7 @@ final class RunnableServiceE2EIT
       )
       val uploadBinding = Http()(sys)
         .newServerAt("127.0.0.1", 0)
-        .bind(new UploadRoutes(upload.upload).routes)
+        .bind(new UploadRoutes((b, ct, mt) => upload.upload(b, ct, mt)).routes)
         .futureValue
       val uploadUri = s"http://127.0.0.1:${uploadBinding.localAddress.getPort}/uploads"
 

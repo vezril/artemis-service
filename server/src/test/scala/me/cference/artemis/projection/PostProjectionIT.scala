@@ -202,6 +202,42 @@ final class PostProjectionIT
       }
     }
 
+    "project soft-delete/restore/purge and drive the retention query (dedup-and-gc 2/3/4)" in {
+      val id = PostId.unsafe("gc1")
+      val gcMd5 = Md5("a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1") // unique (others share `md5`)
+      val delAt = Instant.parse("2026-06-01T00:00:00Z") // well in the past
+      send(id, CreatePost(id, gcMd5, filetype, now))
+      send(id, RecordProcessed(dimensions, derivatives, phash, now))
+      send(id, ChangeTags(Set(Tag.unsafe("gc_tag")), now))
+      send(id, PostCommand.Delete(delAt))
+
+      runProjection {
+        eventually {
+          val row = repo.getPost("gc1").futureValue.getOrElse(fail("gc1 not projected"))
+          row.status shouldBe "deleted"
+          // Soft-deleted and past its window → appears in the retention work-list, carrying the
+          // reconstructed original key among its blob keys.
+          val due = repo.softDeletedBefore(Instant.parse("2026-06-15T00:00:00Z")).futureValue
+          val target = due.find(_.id == "gc1").getOrElse(fail("gc1 not in the retention work-list"))
+          target.blobKeys should contain(s"originals/${gcMd5.value.take(2)}/${gcMd5.value}.png")
+          // A cutoff BEFORE the deletion instant must not surface it (within-retention).
+          repo.softDeletedBefore(Instant.parse("2026-05-01T00:00:00Z")).futureValue.map(_.id) should
+            not contain "gc1"
+          // Its md5 is still referenced (soft-deleted posts keep their blobs).
+          repo.referencedMd5s().futureValue should contain(gcMd5.value)
+        }
+      }
+
+      // Purge removes the read-model row entirely, and the md5 is no longer referenced.
+      send(id, PostCommand.Purge(now))
+      runProjection {
+        eventually {
+          repo.getPost("gc1").futureValue shouldBe None
+          repo.referencedMd5s().futureValue should not contain gcMd5.value
+        }
+      }
+    }
+
     "maintain tags.post_count across posts gaining and losing a tag (3.2)" in {
       val a = PostId.unsafe("t-a")
       val b = PostId.unsafe("t-b")

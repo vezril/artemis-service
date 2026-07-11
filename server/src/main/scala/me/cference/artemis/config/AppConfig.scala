@@ -56,6 +56,15 @@ final case class HermesConfig(
 final case class DedupConfig(hammingThreshold: Int)
 
 /**
+ * Deletion-lifecycle knobs (deletion-lifecycle spec). `retention` is how long a soft-deleted post
+ * is kept (still restorable) before auto-purge permanently deletes it + its blobs; `purgeInterval`
+ * is how often the retention job scans for due posts. Read from `artemis.gc`, env-overridable.
+ * (There is no orphan-sweep grace window: Apollo exposes no blob creation time, so the sweep
+ * protects in-flight uploads via the referenced-post set — see `gc.OrphanSweep`.)
+ */
+final case class GcConfig(retention: FiniteDuration, purgeInterval: FiniteDuration)
+
+/**
  * Bind coordinates for the HTTP API surface (health, metrics, search, catalog, media gateway). Read
  * from `artemis.http`; env-overridable so no host/port is hard-coded in
  * [[me.cference.artemis.Main]].
@@ -114,6 +123,13 @@ object AppConfig:
 
   def dedup(config: Config): DedupConfig =
     DedupConfig(hammingThreshold = config.getInt("artemis.dedup.hamming-threshold"))
+
+  def gc(config: Config): GcConfig =
+    val gc = config.getConfig("artemis.gc")
+    GcConfig(
+      retention = gc.getDuration("retention").toMillis.millis,
+      purgeInterval = gc.getDuration("purge-interval").toMillis.millis
+    )
 
   def http(config: Config): HttpConfig =
     val hc = config.getConfig("artemis.http")

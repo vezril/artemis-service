@@ -2,11 +2,12 @@ package me.cference.artemis.domain
 
 /**
  * The folded state of one post aggregate. A journal for a given post moves `Empty -> Pending ->
- * Active -> Deleted`; `Deleted` is a terminal tombstone (only `Restore` can leave it). `Pending` is
- * a created-but-not-yet-processed post; `RecordProcessed` promotes it to `Active`, carrying the
- * derived media facts and the mutable content (tags, rating, relationships, favorites, score,
- * source) that later commands edit. A pending post whose processing fails (`MarkFailed`) folds to
- * `Failed`, a terminal state that rejects every command.
+ * Active -> Deleted`; a `Deleted` post is either restored back to `Active` (`Restore`) or, after
+ * its retention window, permanently `Purged` (`Purge`) — a terminal state that rejects every
+ * command. `Pending` is a created-but-not-yet-processed post; `RecordProcessed` promotes it to
+ * `Active`, carrying the derived media facts and the mutable content (tags, rating, relationships,
+ * favorites, score, source) that later commands edit. A pending post whose processing fails
+ * (`MarkFailed`) folds to `Failed`, a terminal state that rejects every command.
  */
 enum PostState:
   case Empty
@@ -14,6 +15,7 @@ enum PostState:
   case Active(id: PostId, media: PostMedia, content: PostContent)
   case Deleted(id: PostId, media: PostMedia, content: PostContent)
   case Failed(id: PostId, md5: Md5, filetype: Filetype, reason: String)
+  case Purged(id: PostId)
 
 object PostState:
   val initial: PostState = Empty

@@ -45,3 +45,25 @@ final class ApolloObjectClient(config: ApolloConfig)(using system: ActorSystem[?
   /** Stream a get: Apollo emits a header message then the object's chunks. */
   def getObject(req: GetObjectRequest): Source[GetObjectResponse, NotUsed] =
     client.getObject(req)
+
+  /** Permanently delete one object (deletion-lifecycle purge + orphan sweep). */
+  def deleteObject(bucket: String, key: String): Future[DeleteObjectResponse] =
+    client.deleteObject(DeleteObjectRequest(bucket = bucket, `object` = key))
+
+  /**
+   * One page of objects under `prefix` in `bucket` (orphan sweep + purge enumerate derivatives).
+   */
+  def listObjects(
+      bucket: String,
+      prefix: String,
+      pageSize: Int,
+      pageToken: String
+  ): Future[ListObjectsResponse] =
+    client.listObjects(
+      ListObjectsRequest(
+        bucket = bucket,
+        prefix = prefix,
+        pageSize = pageSize,
+        pageToken = pageToken
+      )
+    )

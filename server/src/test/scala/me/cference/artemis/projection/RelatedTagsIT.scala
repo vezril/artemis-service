@@ -117,7 +117,7 @@ final class RelatedTagsIT
     "decrement a post's contribution on delete" in {
       tagPost("del1", Seq("del_x", "del_y"))
       coCount("del_x", "del_y") shouldBe 1
-      repo.deletePost("del1").futureValue
+      repo.deletePost("del1", Instant.parse("2026-07-11T00:00:00Z")).futureValue
       coCount("del_x", "del_y") shouldBe 0
     }
   }
