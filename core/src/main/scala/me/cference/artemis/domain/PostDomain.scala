@@ -31,8 +31,8 @@ object PostDomain:
       case _: Pending =>
         command match
           case _: CreatePost => Left(DomainError.PostAlreadyExists)
-          case RecordProcessed(dimensions, derivatives, phash, at) =>
-            Right(Seq(MediaProcessed(dimensions, derivatives, phash, at)))
+          case RecordProcessed(dimensions, derivatives, phash, at, specVersion) =>
+            Right(Seq(MediaProcessed(dimensions, derivatives, phash, at, specVersion)))
           case MarkFailed(reason, at) => Right(Seq(ProcessingFailed(reason, at)))
           case Restore(_) => Right(Seq.empty) // already live: no-op
           // A pending post has no processed media, so the media/content-carrying `Deleted`
@@ -46,8 +46,8 @@ object PostDomain:
           case _: CreatePost =>
             Left(DomainError.PostAlreadyExists)
 
-          case RecordProcessed(dimensions, derivatives, phash, at) =>
-            Right(Seq(MediaProcessed(dimensions, derivatives, phash, at)))
+          case RecordProcessed(dimensions, derivatives, phash, at, specVersion) =>
+            Right(Seq(MediaProcessed(dimensions, derivatives, phash, at, specVersion)))
 
           case Delete(at) =>
             Right(Seq(PostDeleted(at)))
@@ -87,11 +87,14 @@ object PostDomain:
             if content.duplicateOf.contains(matchedId) then Right(Seq.empty)
             else Right(Seq(PossibleDuplicateFlagged(matchedId, at)))
 
-          case RecordSuggestions(suggestions, at) =>
-            // Idempotent: recording the same set on an already-flagged post is a no-op (redelivery
-            // safe); otherwise replace the pending set and (re)raise the review flag.
-            if content.needsReview && content.suggestions == suggestions then Right(Seq.empty)
-            else Right(Seq(SuggestionsRecorded(suggestions, at)))
+          case RecordSuggestions(suggestions, at, taggerVersion) =>
+            // Idempotent: recording the same set at the same tagger version on an already-flagged
+            // post is a no-op (redelivery safe); otherwise replace the pending set, (re)raise the
+            // review flag, and stamp the tagger version.
+            if content.needsReview && content.suggestions == suggestions &&
+              content.taggerVersion == taggerVersion
+            then Right(Seq.empty)
+            else Right(Seq(SuggestionsRecorded(suggestions, at, taggerVersion)))
 
           case AcceptSuggestions(accepted, at) =>
             // Accept = a normal tag edit (union + canonicalize, so it flows through the alias graph
@@ -148,17 +151,29 @@ object PostDomain:
       case (Empty, PostCreated(id, md5, filetype, _)) =>
         Pending(id, md5, filetype)
 
-      case (Pending(id, md5, filetype), MediaProcessed(dimensions, derivatives, phash, _)) =>
-        Active(id, PostMedia(md5, filetype, dimensions, derivatives, phash), PostContent.empty)
+      case (Pending(id, md5, filetype), MediaProcessed(dimensions, derivatives, phash, _, specV)) =>
+        Active(
+          id,
+          PostMedia(md5, filetype, dimensions, derivatives, phash, specV),
+          PostContent.empty
+        )
 
       case (Pending(id, md5, filetype), ProcessingFailed(reason, _)) =>
         Failed(id, md5, filetype, reason)
 
-      case (Active(id, media, content), MediaProcessed(dimensions, derivatives, phash, _)) =>
-        // Reprocessing an already-active post refreshes its media facts, keeps its content.
+      case (Active(id, media, content), MediaProcessed(dimensions, derivatives, phash, _, specV)) =>
+        // Reprocessing an already-active post refreshes its media facts (and the spec-version
+        // stamp), keeps its content. A metadata-only reprocess produces NO derivatives (empty),
+        // which must NOT wipe the post's existing thumb/sample — an empty result means "this job
+        // generated no derivatives", not "the post has none", so keep the current ones.
         Active(
           id,
-          media.copy(dimensions = dimensions, derivatives = derivatives, phash = phash),
+          media.copy(
+            dimensions = dimensions,
+            derivatives = if derivatives.nonEmpty then derivatives else media.derivatives,
+            phash = phash,
+            derivativeSpecVersion = specV
+          ),
           content
         )
 
@@ -195,8 +210,12 @@ object PostDomain:
       case (Active(id, media, content), PossibleDuplicateFlagged(matchedId, _)) =>
         Active(id, media, content.copy(duplicateOf = Some(matchedId)))
 
-      case (Active(id, media, content), SuggestionsRecorded(suggestions, _)) =>
-        Active(id, media, content.copy(suggestions = suggestions, needsReview = true))
+      case (Active(id, media, content), SuggestionsRecorded(suggestions, _, taggerV)) =>
+        Active(
+          id,
+          media,
+          content.copy(suggestions = suggestions, needsReview = true, taggerVersion = taggerV)
+        )
 
       case (Active(id, media, content), SuggestionsReviewed(_)) =>
         // Review done: drop the pending suggestions and leave the queue.

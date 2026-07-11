@@ -78,7 +78,7 @@ final class SimilaritySearchIT
    */
   private def seed(id: String, phash: String): Unit =
     repo.upsertPostCreated(id, "md5", "image/png", "pending", now).futureValue
-    repo.applyMediaProcessed(id, 100, 100, None, phash, "[]", "active").futureValue
+    repo.applyMediaProcessed(id, 100, 100, None, phash, "[]", "active", 0).futureValue
 
   private def applySchema(): Unit =
     val sql = Using.resource(Source.fromResource("create_tables_postgres.sql"))(_.mkString)

@@ -202,6 +202,48 @@ final class PostProjectionIT
       }
     }
 
+    "project version stamps and drive the stale query — resumable (reprocessing 1.2/5.2)" in {
+      val id = PostId.unsafe("rp1")
+      send(id, CreatePost(id, md5, filetype, now))
+      // Processed at derivative spec v3.
+      send(id, RecordProcessed(dimensions, derivatives, phash, now, specVersion = 3))
+      send(id, RecordSuggestions(Vector(SuggestedTag(Tag.unsafe("t"), 0.9, "wd")), now, 1))
+
+      runProjection {
+        eventually {
+          val row = repo.getPost("rp1").futureValue.getOrElse(fail("rp1 not projected"))
+          row.status shouldBe "active"
+          // Below the current derivative version (4) → stale-for-derivatives; at tagger v1.
+          repo.stalePostIds("derivative_spec_version", 4, 100).futureValue should contain("rp1")
+          repo.stalePostIds("tagger_version", 2, 100).futureValue should contain("rp1")
+          // The reprocess info reconstructs the original key + finds the sample derivative.
+          val info =
+            repo.reprocessInfo(Seq("rp1")).futureValue.headOption.getOrElse(fail("no info"))
+          info.md5 shouldBe md5.value
+          info.sampleRef shouldBe Some("blob://sample")
+        }
+      }
+
+      // Reprocess derivatives: a fresh MediaProcessed at v4 re-stamps → no longer stale (resumable).
+      send(id, RecordProcessed(dimensions, derivatives, phash, now, specVersion = 4))
+      runProjection {
+        eventually {
+          repo.stalePostIds("derivative_spec_version", 4, 100).futureValue should not contain "rp1"
+          // Tags stamp is independent — still at v1, still stale for tags.
+          repo.stalePostIds("tagger_version", 2, 100).futureValue should contain("rp1")
+        }
+      }
+
+      // Metadata-only reprocess (no derivatives in the result) must NOT wipe the sample ref.
+      send(id, RecordProcessed(dimensions, Vector.empty, Phash("f11dcafe"), now, specVersion = 5))
+      runProjection {
+        eventually {
+          val info = repo.reprocessInfo(Seq("rp1")).futureValue.headOption.getOrElse(fail("gone"))
+          info.sampleRef shouldBe Some("blob://sample") // preserved through a metadata reprocess
+        }
+      }
+    }
+
     "project soft-delete/restore/purge and drive the retention query (dedup-and-gc 2/3/4)" in {
       val id = PostId.unsafe("gc1")
       val gcMd5 = Md5("a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1") // unique (others share `md5`)

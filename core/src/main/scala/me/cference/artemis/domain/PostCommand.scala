@@ -22,7 +22,8 @@ object PostCommand:
       dimensions: Dimensions,
       derivatives: Vector[Derivative],
       phash: Phash,
-      at: Instant
+      at: Instant,
+      specVersion: Int = 0
   ) extends PostCommand
 
   /**
@@ -82,8 +83,11 @@ object PostCommand:
    * it for review. Idempotent: re-recording an identical set on an already-flagged post emits
    * nothing, so an at-least-once redelivery of `TagSuggestions` never re-journals.
    */
-  final case class RecordSuggestions(suggestions: Vector[SuggestedTag], at: Instant)
-      extends PostCommand
+  final case class RecordSuggestions(
+      suggestions: Vector[SuggestedTag],
+      at: Instant,
+      taggerVersion: Int = 0
+  ) extends PostCommand
 
   /**
    * Accept a reviewer's chosen tags (any tags — the suggested ones, edited, or added) by UNIONING

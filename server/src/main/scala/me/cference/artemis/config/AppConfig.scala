@@ -65,6 +65,21 @@ final case class DedupConfig(hammingThreshold: Int)
 final case class GcConfig(retention: FiniteDuration, purgeInterval: FiniteDuration)
 
 /**
+ * Reprocessing knobs (processing-versions + reprocess-orchestration). `derivativeSpecVersion` /
+ * `taggerVersion` are the CURRENT generation numbers the operator bumps when the derivative spec or
+ * tagger changes — a `stale` reprocess targets posts below these. `topicReprocess` /
+ * `topicTagReprocess` are the lower-priority backfill lanes (distinct from the ingest topics).
+ * `maxSelect` caps how many posts one reprocess enqueues. Read from `artemis.reprocess`.
+ */
+final case class ReprocessConfig(
+    derivativeSpecVersion: Int,
+    taggerVersion: Int,
+    topicReprocess: String,
+    topicTagReprocess: String,
+    maxSelect: Int
+)
+
+/**
  * Bind coordinates for the HTTP API surface (health, metrics, search, catalog, media gateway). Read
  * from `artemis.http`; env-overridable so no host/port is hard-coded in
  * [[me.cference.artemis.Main]].
@@ -129,6 +144,16 @@ object AppConfig:
     GcConfig(
       retention = gc.getDuration("retention").toMillis.millis,
       purgeInterval = gc.getDuration("purge-interval").toMillis.millis
+    )
+
+  def reprocess(config: Config): ReprocessConfig =
+    val rc = config.getConfig("artemis.reprocess")
+    ReprocessConfig(
+      derivativeSpecVersion = rc.getInt("derivative-spec-version"),
+      taggerVersion = rc.getInt("tagger-version"),
+      topicReprocess = rc.getString("topic-reprocess"),
+      topicTagReprocess = rc.getString("topic-tag-reprocess"),
+      maxSelect = rc.getInt("max-select")
     )
 
   def http(config: Config): HttpConfig =

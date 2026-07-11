@@ -133,6 +133,12 @@ CREATE TABLE IF NOT EXISTS posts (
   -- `SuggestionsRecorded`/`SuggestionsReviewed` domain events, so they rebuild by replay.
   needs_review BOOLEAN NOT NULL DEFAULT FALSE,
   suggestions JSONB NOT NULL DEFAULT '[]',
+  -- Reprocessing version stamps (processing-versions): the derivative-spec generation Hephaestus
+  -- ran (from MediaProcessed) and the tagger generation the suggestions came from. Default 0 =
+  -- pre-versioning → stale relative to any current version. Projected from the domain events, so
+  -- they rebuild by replay; the stale query selects rows below the current version per kind.
+  derivative_spec_version INT NOT NULL DEFAULT 0,
+  tagger_version INT NOT NULL DEFAULT 0,
   -- Soft-delete timestamp (deletion-lifecycle): set from the `PostDeleted` event's instant,
   -- cleared on restore. The retention/auto-purge job selects `status = 'deleted'` rows whose
   -- `deleted_at` is older than the retention window. Rebuilds by replay like every other column.

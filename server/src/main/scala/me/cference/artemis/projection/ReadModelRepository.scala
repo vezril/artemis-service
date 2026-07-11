@@ -80,6 +80,18 @@ final case class ReviewItem(postId: String, suggestions: Vector[SuggestionView])
 final case class PurgeTarget(id: String, blobKeys: Seq[String])
 
 /**
+ * Everything the reprocess orchestrator needs to rebuild a post's job: its id, the `md5`/`filetype`
+ * that reconstruct the original's Apollo ref (for a Hephaestus `ProcessMediaJob`), and the sample
+ * derivative ref (for an Argus `TagJob`), if one exists.
+ */
+final case class ReprocessInfo(
+    id: String,
+    md5: String,
+    filetype: String,
+    sampleRef: Option[String]
+)
+
+/**
  * Read model over PostgreSQL: idempotent upserts/updates applied by the projection handlers, and a
  * few read helpers for the ITs. Uses its own short-lived r2dbc connections (not the persistence
  * plugin's pool), so the read side is independent of the write side. Every handler write is
@@ -111,6 +123,22 @@ object ReadModelRepository:
           case _ => None
         }
       case _ => Seq.empty
+
+  /**
+   * The full `bucket/object` ref of the `sample` derivative from the projected `derivatives` JSON,
+   * or `None` if there is no sample. Used to rebuild an Argus `TagJob` on a `tags` reprocess.
+   */
+  def sampleRef(derivativesJson: String): Option[String] =
+    import spray.json.*
+    derivativesJson.parseJson match
+      case JsArray(elems) =>
+        elems.collectFirst {
+          case JsObject(fields)
+              if fields.get("kind").contains(JsString("sample")) &&
+                fields.get("ref").exists(_.isInstanceOf[JsString]) =>
+            fields("ref").asInstanceOf[JsString].value
+        }
+      case _ => None
 
 final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext):
 
@@ -156,12 +184,17 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
       duration: Option[Long],
       phash: String,
       derivativesJson: String,
-      status: String
+      status: String,
+      specVersion: Int
   ): Future[Unit] =
     update(
+      // A metadata-only reprocess returns no derivatives; keep the existing ones rather than
+      // wiping to `[]` (mirrors the aggregate's evolve — empty means "this job made none").
       """UPDATE posts SET
         |  width = $2, height = $3, duration = $4, phash = $5,
-        |  derivatives = CAST($6 AS JSONB), status = $7
+        |  derivatives = CASE WHEN CAST($6 AS JSONB) = '[]'::jsonb THEN derivatives
+        |                     ELSE CAST($6 AS JSONB) END,
+        |  status = $7, derivative_spec_version = $8
         |WHERE id = $1""".stripMargin,
       s =>
         val bound = s
@@ -171,7 +204,11 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
         val withDuration = duration match
           case Some(ms) => bound.bind(3, java.lang.Long.valueOf(ms))
           case None => bound.bindNull(3, classOf[java.lang.Long])
-        withDuration.bind(4, phash).bind(5, derivativesJson).bind(6, status)
+        withDuration
+          .bind(4, phash)
+          .bind(5, derivativesJson)
+          .bind(6, status)
+          .bind(7, Integer.valueOf(specVersion))
     ).map(_ => ())
 
   def setStatus(id: String, status: String): Future[Unit] =
@@ -269,6 +306,39 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
   def purgePost(id: String): Future[Unit] =
     update("DELETE FROM posts WHERE id = $1", _.bind(0, id)).map(_ => ())
 
+  // --- reprocessing (processing-versions + reprocess-orchestration) ----------
+
+  /**
+   * Ids of active posts whose stamp in `versionColumn` is below `currentVersion` — the `stale`
+   * reprocess selection. `versionColumn` is a fixed column name from `ReprocessKind` (never user
+   * input), so interpolating it is safe. Ordered by id and capped, so a big backfill is chunked and
+   * a re-run naturally resumes (already-current posts drop out).
+   */
+  def stalePostIds(versionColumn: String, currentVersion: Int, limit: Int): Future[Seq[String]] =
+    query(
+      s"""SELECT id FROM posts
+         |WHERE status = 'active' AND $versionColumn < $$1
+         |ORDER BY id LIMIT $$2""".stripMargin,
+      _.bind(0, Integer.valueOf(currentVersion)).bind(1, Integer.valueOf(limit))
+    )(_.get("id", classOf[String]))
+
+  /** Per-post info to rebuild a reprocess job, for the given (active) post ids. */
+  def reprocessInfo(ids: Seq[String]): Future[Seq[ReprocessInfo]] =
+    if ids.isEmpty then Future.successful(Seq.empty)
+    else
+      query(
+        """SELECT id, md5, filetype, derivatives::text AS derivatives FROM posts
+          |WHERE status = 'active' AND id = ANY($1)""".stripMargin,
+        _.bind(0, ids.toArray)
+      ) { row =>
+        ReprocessInfo(
+          row.get("id", classOf[String]),
+          row.get("md5", classOf[String]),
+          row.get("filetype", classOf[String]),
+          ReadModelRepository.sampleRef(row.get("derivatives", classOf[String]))
+        )
+      }
+
   private def postStatusAndTags(id: String): Future[Option[(String, Seq[String])]] =
     query("SELECT status, tags FROM posts WHERE id = $1", _.bind(0, id)) { row =>
       val status = row.get("status", classOf[String])
@@ -300,10 +370,11 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
    * `suggestionsJson` is the canonical `[{tag,confidence,source}]` array. Idempotent: re-applying
    * the same event sets the same rows.
    */
-  def setSuggestions(id: String, suggestionsJson: String): Future[Unit] =
+  def setSuggestions(id: String, suggestionsJson: String, taggerVersion: Int): Future[Unit] =
     update(
-      "UPDATE posts SET needs_review = TRUE, suggestions = $2::jsonb WHERE id = $1",
-      _.bind(0, id).bind(1, suggestionsJson)
+      """UPDATE posts SET needs_review = TRUE, suggestions = $2::jsonb, tagger_version = $3
+        |WHERE id = $1""".stripMargin,
+      _.bind(0, id).bind(1, suggestionsJson).bind(2, Integer.valueOf(taggerVersion))
     ).map(_ => ())
 
   /** Clear the review flag and empty the pending suggestions (from `SuggestionsReviewed`). */

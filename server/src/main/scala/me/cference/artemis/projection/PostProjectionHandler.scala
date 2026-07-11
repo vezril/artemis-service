@@ -32,7 +32,8 @@ final class PostProjectionHandler(repo: ReadModelRepository)(using ec: Execution
           e.dimensions.duration,
           e.phash.value,
           derivativesJson(e.derivatives),
-          "active"
+          "active",
+          e.specVersion
         )
       case _: ProcessingFailed => repo.setStatus(id, "failed")
       case e: TagsChanged => repo.setTags(id, e.tags.map(_.value).toSeq)
@@ -43,7 +44,8 @@ final class PostProjectionHandler(repo: ReadModelRepository)(using ec: Execution
       case _: Favorited => repo.setFavorited(id, true)
       case _: Unfavorited => repo.setFavorited(id, false)
       case e: PossibleDuplicateFlagged => repo.setDuplicateOf(id, e.matchedPostId.value)
-      case e: SuggestionsRecorded => repo.setSuggestions(id, SuggestionJson.encode(e.suggestions))
+      case e: SuggestionsRecorded =>
+        repo.setSuggestions(id, SuggestionJson.encode(e.suggestions), e.taggerVersion)
       case _: SuggestionsReviewed => repo.clearReview(id)
       case e: PostDeleted => repo.deletePost(id, e.at)
       case _: PostRestored => repo.restorePost(id)

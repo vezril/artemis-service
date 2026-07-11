@@ -14,11 +14,17 @@ object PostEvent:
   final case class PostCreated(id: PostId, md5: Md5, filetype: Filetype, at: Instant)
       extends PostEvent
 
+  /**
+   * `specVersion` is the derivative-spec generation Hephaestus actually ran (from
+   * `MediaProcessed.spec_version`), stamped so reprocessing can find posts stale relative to the
+   * current spec. Defaults to 0 so events journaled before versioning deserialize as "stale".
+   */
   final case class MediaProcessed(
       dimensions: Dimensions,
       derivatives: Vector[Derivative],
       phash: Phash,
-      at: Instant
+      at: Instant,
+      specVersion: Int = 0
   ) extends PostEvent
 
   /** Processing failed terminally for a pending post; `reason` is the human-readable cause. */
@@ -70,8 +76,17 @@ object PostEvent:
    * delta) keeps recording idempotent: an at-least-once redelivery of the same `TagSuggestions`
    * re-records the same set rather than appending.
    */
-  final case class SuggestionsRecorded(suggestions: Vector[SuggestedTag], at: Instant)
-      extends PostEvent
+  /**
+   * `taggerVersion` is the tagger generation these suggestions came from, stamped so a reprocess of
+   * kind `tags` can find posts tagged below the current model. (The `TagSuggestions` contract
+   * carries no version, so the effectful caller supplies Artemis's configured current tagger
+   * version.) Defaults to 0 so events journaled before versioning deserialize as "stale".
+   */
+  final case class SuggestionsRecorded(
+      suggestions: Vector[SuggestedTag],
+      at: Instant,
+      taggerVersion: Int = 0
+  ) extends PostEvent
 
   /**
    * A human reviewed this post's pending suggestions — clearing the needs-review flag and emptying
