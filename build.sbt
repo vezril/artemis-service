@@ -58,6 +58,18 @@ lazy val lexiconVersion = "0.5.0"
 lazy val testcontainersVersion = "0.41.4"
 lazy val logbackVersion = "1.5.12"
 
+// --- CVE-remediation pins (harden-dependencies) ---------------------------
+// Patched versions of libraries Artemis pulls *transitively* (not declared directly), forced onto the
+// classpath via `dependencyOverrides` below so the release Trivy gate (CRITICAL/HIGH, ignore-unfixed)
+// passes. Each family is aligned to ONE version: netty/grpc/jackson all reject a mixed-version
+// classpath, and the scanned findings span several modules per family. Versions confirmed against a
+// local Trivy scan of the built image — bump forward as Dependabot/Trivy flag newer fixes.
+lazy val jacksonVersion = "2.21.4" // CVE-2026-54512/54513 (jackson-databind PolymorphicTypeValidator-bypass RCE); via pekko-serialization-jackson
+lazy val jacksonAnnotationsVersion = "2.21" // jackson-annotations tracks the minor line, not databind's micro (jackson-bom 2.21.4 pins 2.21)
+lazy val nettyVersion = "4.1.135.Final" // HIGH across netty codec/codec-dns/codec-http/handler/resolver-dns; via the gRPC stack
+lazy val grpcVersion = "1.75.0" // CVE-2025-55163 (grpc-netty-shaded HTTP/2 "MadeYouReset"); the Codex gRPC clients' transport
+lazy val lz4Version = "1.11.1" // CVE-2025-12183 + CVE-2025-66566 (lz4-java); the resolved artifact is the at.yawk.lz4 fork
+
 // read:packages token for the-lexicon GitHub Packages resolver: LEXICON_TOKEN (the CI secret,
 // mirroring apollo-storage) preferred, else GITHUB_TOKEN (authorized dev). None ⇒ local ivy fallback.
 lazy val lexiconToken: Option[String] =
@@ -171,6 +183,56 @@ lazy val server = (project in file("server"))
       "com.dimafeng" %% "testcontainers-scala-postgresql" % testcontainersVersion % Test,
       // JDBC driver used by tests to apply DDL and assert journal rows.
       "org.postgresql" % "postgresql" % "42.7.4" % Test
+    ),
+    // --- CVE remediation (harden-dependencies) -------------------------------
+    // Force patched versions of transitively-pulled libraries so the release Trivy gate passes.
+    // None of these are direct deps — they arrive under pekko-serialization-jackson (jackson),
+    // pekko-grpc / the Codex gRPC clients (netty, grpc), and the codec path (lz4) — so pinning the
+    // direct deps would not move them; `dependencyOverrides` forces the resolved version. Every
+    // module of each family is listed (not just the scan-flagged ones) because netty/grpc/jackson all
+    // require a single uniform version across their modules.
+    dependencyOverrides ++= Seq(
+      // jackson — align the whole stack; jackson-databind is the flagged RCE, the rest match it.
+      "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonAnnotationsVersion,
+      "com.fasterxml.jackson.core" % "jackson-core" % jacksonVersion,
+      "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVersion,
+      "com.fasterxml.jackson.dataformat" % "jackson-dataformat-cbor" % jacksonVersion,
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % jacksonVersion,
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % jacksonVersion,
+      "com.fasterxml.jackson.module" % "jackson-module-parameter-names" % jacksonVersion,
+      "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVersion,
+      // netty — align every module present on the classpath (uniform-version requirement).
+      "io.netty" % "netty-buffer" % nettyVersion,
+      "io.netty" % "netty-codec" % nettyVersion,
+      "io.netty" % "netty-codec-dns" % nettyVersion,
+      "io.netty" % "netty-codec-http" % nettyVersion,
+      "io.netty" % "netty-codec-socks" % nettyVersion,
+      "io.netty" % "netty-common" % nettyVersion,
+      "io.netty" % "netty-handler" % nettyVersion,
+      "io.netty" % "netty-handler-proxy" % nettyVersion,
+      "io.netty" % "netty-resolver" % nettyVersion,
+      "io.netty" % "netty-resolver-dns" % nettyVersion,
+      "io.netty" % "netty-resolver-dns-classes-macos" % nettyVersion,
+      "io.netty" % "netty-resolver-dns-native-macos" % nettyVersion,
+      "io.netty" % "netty-transport" % nettyVersion,
+      "io.netty" % "netty-transport-classes-epoll" % nettyVersion,
+      "io.netty" % "netty-transport-native-epoll" % nettyVersion,
+      "io.netty" % "netty-transport-native-unix-common" % nettyVersion,
+      // grpc — align the whole io.grpc family; grpc-netty-shaded carries the flagged CVE and its
+      // internal transport SPI must match grpc-core, so all move together.
+      "io.grpc" % "grpc-api" % grpcVersion,
+      "io.grpc" % "grpc-context" % grpcVersion,
+      "io.grpc" % "grpc-core" % grpcVersion,
+      "io.grpc" % "grpc-netty-shaded" % grpcVersion,
+      "io.grpc" % "grpc-protobuf" % grpcVersion,
+      "io.grpc" % "grpc-protobuf-lite" % grpcVersion,
+      "io.grpc" % "grpc-stub" % grpcVersion,
+      "io.grpc" % "grpc-util" % grpcVersion,
+      // lz4 — the artifact actually resolved onto the classpath is the maintained `at.yawk.lz4`
+      // fork (Trivy flags it as `at.yawk.lz4:lz4-java`, not `org.lz4`), so pin the fork past its
+      // HIGH CVEs. Keep the original `org.lz4` coordinate pinned too in case another path pulls it.
+      "at.yawk.lz4" % "lz4-java" % lz4Version,
+      "org.lz4" % "lz4-java" % "1.8.1"
     ),
     // BuildInfo exposes the dynver version to the running app (health endpoint reports it).
     buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
