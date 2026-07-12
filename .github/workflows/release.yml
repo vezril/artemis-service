@@ -77,7 +77,7 @@ jobs:
       # Image CVE scan (static-analysis): scan the built image before it is pushed and fail the
       # release on CRITICAL/HIGH vulnerabilities so a known-vulnerable image never ships.
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: "${{ env.IMAGE_NAME }}:${{ env.VERSION }}"
           format: table
