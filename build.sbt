@@ -100,7 +100,7 @@ lazy val core = (project in file("core"))
     libraryDependencies ++= Seq(
       "org.scalatest" %% "scalatest" % scalaTestVersion % Test,
       "org.scalatestplus" %% "scalacheck-1-18" % "3.2.19.0" % Test,
-      "org.scalacheck" %% "scalacheck" % "1.18.1" % Test
+      "org.scalacheck" %% "scalacheck" % "1.19.0" % Test
     )
   )
 
