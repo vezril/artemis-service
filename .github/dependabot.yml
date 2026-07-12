@@ -1,0 +1,22 @@
+# Dependency-update / CVE alerts (static-analysis). Dependabot opens PRs for outdated
+# sbt library dependencies and GitHub Actions, so vulnerable or stale deps surface as
+# reviewable PRs rather than silently aging.
+version: 2
+updates:
+  # sbt / Scala library dependencies (build.sbt + project/*.sbt).
+  - package-ecosystem: "sbt"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+
+  # GitHub Actions used by the workflows above.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(ci)"

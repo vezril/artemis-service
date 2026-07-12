@@ -1,0 +1,15 @@
+# gitleaks configuration (static-analysis / secret scanning).
+#
+# Extends the full default ruleset (all provider-specific secret patterns stay active everywhere),
+# and allowlists ONE thing: the OpenSpec documentation tree. Spec / design / proposal markdown is
+# human-written prose — type signatures, md5 hashes, and phrases like "auth, resumable/chunked
+# uploads" — which trips the broad generic high-entropy rule with false positives while never
+# carrying a real secret. Source code and config files are still fully scanned.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "OpenSpec documentation markdown is prose, not secrets."
+paths = [
+  '''openspec/.*\.md$''',
+]
