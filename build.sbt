@@ -177,7 +177,11 @@ lazy val server = (project in file("server"))
     buildInfoPackage := "me.cference.artemis.build",
     buildInfoOptions += BuildInfoOption.ToJson,
     // --- Docker (sbt-native-packager) — service-image spec. ---
-    dockerBaseImage := "eclipse-temurin:21-jre",
+    // Pin the Ubuntu 24.04 LTS ("noble") JRE variant. The default `21-jre` tag now resolves to an
+    // Ubuntu 26.04 base that bundles Canonical's Go-based `/usr/bin/pebble`, whose golang.org/x/net
+    // + Go-stdlib HIGH CVEs fail the release image scan (Trivy). `noble` ships no pebble and scans
+    // clean, and Artemis (a JVM service) never used it.
+    dockerBaseImage := "eclipse-temurin:21-jre-noble",
     dockerRepository := sys.env.get("DOCKERHUB_USERNAME"),
     dockerUpdateLatest := false, // the release workflow controls :latest explicitly
     Docker / packageName := "artemis",
