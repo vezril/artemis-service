@@ -62,8 +62,10 @@ lazy val logbackVersion = "1.5.12"
 // Pekko/grpc pull older versions; these force patched ones (same compat line where possible). Kept
 // as whole-suite bumps so netty/grpc/jackson modules never end up on mixed versions.
 lazy val nettyVersion = "4.1.135.Final" // via pekko-http / pekko-grpc / grpc (was 4.1.112.Final)
-lazy val grpcVersion = "1.75.0" // via pekko-grpc-runtime (was 1.67.1; shaded-netty CVE fixed in 1.75)
-lazy val jacksonVersion = "2.21.5" // via pekko-serialization-jackson (was 2.19.2); annotations = 2.21
+lazy val grpcVersion =
+  "1.75.0" // via pekko-grpc-runtime (was 1.67.1; shaded-netty CVE fixed in 1.75)
+lazy val jacksonVersion =
+  "2.21.5" // via pekko-serialization-jackson (was 2.19.2); annotations = 2.21
 
 // read:packages token for the-lexicon GitHub Packages resolver: LEXICON_TOKEN (the CI secret,
 // mirroring apollo-storage) preferred, else GITHUB_TOKEN (authorized dev). None ⇒ local ivy fallback.
