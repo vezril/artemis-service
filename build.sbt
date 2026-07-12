@@ -58,6 +58,13 @@ lazy val lexiconVersion = "0.5.0"
 lazy val testcontainersVersion = "0.41.4"
 lazy val logbackVersion = "1.5.12"
 
+// Security-driven overrides of transitive deps flagged HIGH by the release image scan (Trivy).
+// Pekko/grpc pull older versions; these force patched ones (same compat line where possible). Kept
+// as whole-suite bumps so netty/grpc/jackson modules never end up on mixed versions.
+lazy val nettyVersion = "4.1.135.Final" // via pekko-http / pekko-grpc / grpc (was 4.1.112.Final)
+lazy val grpcVersion = "1.75.0" // via pekko-grpc-runtime (was 1.67.1; shaded-netty CVE fixed in 1.75)
+lazy val jacksonVersion = "2.21.5" // via pekko-serialization-jackson (was 2.19.2); annotations = 2.21
+
 // read:packages token for the-lexicon GitHub Packages resolver: LEXICON_TOKEN (the CI secret,
 // mirroring apollo-storage) preferred, else GITHUB_TOKEN (authorized dev). None ⇒ local ivy fallback.
 lazy val lexiconToken: Option[String] =
@@ -172,6 +179,52 @@ lazy val server = (project in file("server"))
       // JDBC driver used by tests to apply DDL and assert journal rows.
       "org.postgresql" % "postgresql" % "42.7.4" % Test
     ),
+    // Security overrides: force patched versions of transitive deps the release image scan (Trivy)
+    // flags HIGH. Whole-suite bumps so no module is left on a mismatched version.
+    dependencyOverrides ++=
+      Seq(
+        "netty-buffer",
+        "netty-codec",
+        "netty-codec-dns",
+        "netty-codec-http",
+        "netty-codec-socks",
+        "netty-common",
+        "netty-handler",
+        "netty-handler-proxy",
+        "netty-resolver",
+        "netty-resolver-dns",
+        "netty-resolver-dns-classes-macos",
+        "netty-resolver-dns-native-macos",
+        "netty-transport",
+        "netty-transport-classes-epoll",
+        "netty-transport-native-epoll",
+        "netty-transport-native-unix-common"
+      ).map("io.netty" % _ % nettyVersion) ++
+        Seq(
+          "grpc-api",
+          "grpc-context",
+          "grpc-core",
+          "grpc-netty-shaded",
+          "grpc-protobuf",
+          "grpc-protobuf-lite",
+          "grpc-stub",
+          "grpc-util"
+        ).map("io.grpc" % _ % grpcVersion) ++
+        Seq(
+          "com.fasterxml.jackson.core" % "jackson-core" % jacksonVersion,
+          "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVersion,
+          "com.fasterxml.jackson.core" % "jackson-annotations" % "2.21", // annotations lags: no patch releases
+
+          "com.fasterxml.jackson.dataformat" % "jackson-dataformat-cbor" % jacksonVersion,
+          "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % jacksonVersion,
+          "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % jacksonVersion,
+          "com.fasterxml.jackson.module" % "jackson-module-parameter-names" % jacksonVersion,
+          "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVersion,
+          // The lz4-java on the classpath is the maintained `at.yawk.lz4` fork; bump it past its
+          // HIGH CVE. (Also pin the original `org.lz4` coordinate in case it's pulled elsewhere.)
+          "at.yawk.lz4" % "lz4-java" % "1.11.1",
+          "org.lz4" % "lz4-java" % "1.8.1"
+        ),
     // BuildInfo exposes the dynver version to the running app (health endpoint reports it).
     buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
     buildInfoPackage := "me.cference.artemis.build",
