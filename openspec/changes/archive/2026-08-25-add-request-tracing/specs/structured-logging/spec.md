@@ -1,24 +1,9 @@
-# structured-logging Specification
+# structured-logging
 
-## Purpose
-TBD - created by archiving change add-structured-logging. Update Purpose after archive.
-## Requirements
-### Requirement: JSON-structured logs in the container
-The service SHALL emit each log event as a single-line JSON object when `LOG_FORMAT=json` (the default
-in its container image), carrying at least a timestamp, level, logger, thread, message, the `service`
-name, and — for errors — the exception's stack trace; MDC context SHALL appear as fields. In local
-development (no `LOG_FORMAT` override) it SHALL emit human-readable text instead.
+Make `correlationId` a named, first-class field of Artemis's log schema — the id request-tracing sets
+in the MDC — so an ingest flow is followable in Loki across services by one field.
 
-#### Scenario: An error is emitted as parseable JSON
-- **GIVEN** `LOG_FORMAT=json`
-- **WHEN** the service logs an ERROR with an exception
-- **THEN** the output is one JSON object with `level` = `ERROR`, the `service` name, the logger, the
-  message, and a `stack_trace` field — extractable without regex over multi-line text
-
-#### Scenario: Local development stays human-readable
-- **GIVEN** no `LOG_FORMAT` is set
-- **WHEN** the service logs
-- **THEN** the console output is human-readable text
+## MODIFIED Requirements
 
 ### Requirement: Constellation-wide log field schema
 
@@ -42,4 +27,3 @@ fields); the requirement is that the id be in the MDC on the hot paths.
 - **GIVEN** a request or consumed message handled under `correlationId=req-42`
 - **WHEN** Artemis logs during it
 - **THEN** the JSON line has a top-level `correlationId` field = `req-42`, queryable in Loki identically to the same field in other services' logs
-

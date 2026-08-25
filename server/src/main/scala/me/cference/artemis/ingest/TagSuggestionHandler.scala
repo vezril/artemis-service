@@ -39,7 +39,9 @@ final class TagSuggestionHandler(
     taggerVersion: Int = 0
 )(using system: ActorSystem[?], timeout: Timeout):
 
-  private given scala.concurrent.ExecutionContext = system.executionContext
+  // MDC-propagating so the consumer's adopted correlation id rides this handler's async work.
+  private given scala.concurrent.ExecutionContext =
+    me.cference.artemis.tracing.MdcPropagatingExecutionContext(system.executionContext)
   private val log = LoggerFactory.getLogger(getClass)
 
   def onSuggestions(m: TagSuggestions): Future[Unit] =

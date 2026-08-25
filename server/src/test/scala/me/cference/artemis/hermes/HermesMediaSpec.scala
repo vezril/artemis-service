@@ -1,5 +1,8 @@
 package me.cference.artemis.hermes
 
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.classic.{Level, LoggerContext}
+import ch.qos.logback.core.read.ListAppender
 import codex.messages.v1.{
   Derivative as WireDerivative,
   JobError,
@@ -17,6 +20,7 @@ import me.cference.artemis.domain.{Filetype, Md5, PostId, PostState}
 import me.cference.artemis.ingest.{InMemoryProcessedJobs, MediaResultHandler}
 import me.cference.artemis.messages.MediaMessages
 import me.cference.artemis.persistence.PostEntity
+import me.cference.artemis.tracing.CorrelationId
 import me.cference.hermesmq.grpc.*
 import org.apache.pekko.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 import org.apache.pekko.actor.typed.RecipientRef
@@ -34,6 +38,7 @@ import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.time.{Millis, Seconds, Span}
 import org.scalatest.wordspec.AnyWordSpecLike
+import org.slf4j.{LoggerFactory, MDC}
 
 import java.nio.charset.StandardCharsets.UTF_8
 import java.time.Instant
@@ -41,6 +46,7 @@ import java.util.concurrent.atomic.AtomicLong
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.Future
 import scala.concurrent.duration.DurationInt
+import scala.jdk.CollectionConverters.*
 
 /**
  * The concrete HermesMQ transport (OpenSpec tasks 4.1 publish / 4.2 consume). Config-reading is
@@ -152,6 +158,31 @@ final class HermesMediaSpec
       val decoded = MediaMessages.fromJson[ProcessMediaJob](payload.toStringUtf8)
       decoded shouldBe aProcessMediaJob
     }
+
+    "stamp the current correlation id onto the PublishRequest (outbound propagation)" in {
+      val broker = new FakeBroker(subscriptions = Map.empty)
+      val client = clientFor(broker)
+      val publisher =
+        new HermesMediaJobPublisher(client, TopicProcess)(using system.executionContext)
+
+      MDC.put(CorrelationId.MdcKey, "cid-publish-7")
+      try publisher.publish(aProcessMediaJob).futureValue
+      finally MDC.remove(CorrelationId.MdcKey)
+
+      broker.lastPublish.map(_.correlationId) shouldBe Some("cid-publish-7")
+    }
+
+    "leave the PublishRequest correlation id empty when none is in context" in {
+      val broker = new FakeBroker(subscriptions = Map.empty)
+      val client = clientFor(broker)
+      val publisher =
+        new HermesMediaJobPublisher(client, TopicProcess)(using system.executionContext)
+
+      MDC.remove(CorrelationId.MdcKey)
+      publisher.publish(aProcessMediaJob).futureValue
+
+      broker.lastPublish.map(_.correlationId) shouldBe Some("")
+    }
   }
 
   @volatile private var posts: Map[String, RecipientRef[PostEntity.Command]] = Map.empty
@@ -178,6 +209,26 @@ final class HermesMediaSpec
     val probe = testKit.createTestProbe[PostState]()
     postFor(id) ! PostEntity.Get(probe.ref)
     probe.receiveMessage()
+
+  /**
+   * Attach a capturing appender to the `me.cference.artemis` logger at `level` and return the live
+   * event list plus a detach thunk. Lets a test assert the adopted `correlationId` reaches a
+   * handler's log MDC even after the async activation ask (request-tracing).
+   */
+  private def captureArtemisLogs(level: Level): (collection.Seq[ILoggingEvent], () => Unit) =
+    val context = LoggerFactory.getILoggerFactory.asInstanceOf[LoggerContext]
+    val appender = new ListAppender[ILoggingEvent]()
+    appender.setContext(context)
+    appender.start()
+    val logger = context.getLogger("me.cference.artemis")
+    val previous = logger.getLevel
+    logger.setLevel(level)
+    logger.addAppender(appender)
+    val detach = () =>
+      logger.detachAppender(appender)
+      appender.stop()
+      logger.setLevel(previous)
+    (appender.list.asScala, detach)
 
   private def processedJson(jobId: String, postId: String, width: Int, height: Int): ProtoBytes =
     val m = MediaProcessed(
@@ -298,6 +349,25 @@ final class HermesMediaSpec
         case other => fail(s"expected Active, got $other")
       broker.messages(TopicProcessed).map(_.ackId) should contain only poisonAck
     }
+
+    "carry the adopted correlation id onto a log line emitted AFTER the activation ask" in {
+      val broker = new FakeBroker(Map(SubProcessed -> TopicProcessed, SubFailed -> TopicFailed))
+      createPending("hc1")
+      // A thumb-only MediaProcessed → the best-effort "no sample derivative" line logs at DEBUG
+      // AFTER the async `RecordProcessed` ask (which completes on a foreign Pekko thread). The id
+      // survives that boundary because the propagating EC captures it at continuation-registration.
+      val _ =
+        broker.enqueue(TopicProcessed, processedJson("j-hc1", "hc1", 320, 240), "cid-consume-9")
+      val consumer = consumerFor(broker)
+      val (events, detach) = captureArtemisLogs(Level.DEBUG)
+      try consumer.pollOnce().futureValue shouldBe 1
+      finally detach()
+
+      val idsOnHc1 = events
+        .filter(_.getFormattedMessage.contains("hc1"))
+        .map(e => Option(e.getMDCPropertyMap.get(CorrelationId.MdcKey)))
+      idsOnHc1 should contain(Some("cid-consume-9"))
+    }
   }
 
   /**
@@ -316,16 +386,23 @@ final class HermesMediaSpec
     private def topicOf(subscriptionId: String): String =
       subscriptions.getOrElse(subscriptionId, subscriptionId)
 
+    /** The last `PublishRequest` the broker received — lets a test assert its `correlationId`. */
+    @volatile var lastPublish: Option[PublishRequest] = None
+
     /** Seed a message onto a topic as the broker would after a publish. Returns the ackId. */
-    def enqueue(topic: String, payload: ProtoBytes): String =
+    def enqueue(topic: String, payload: ProtoBytes, correlationId: String = ""): String =
       val id = s"m-${counter.incrementAndGet()}"
-      val _ = queue(topic).put(id, PulledMessage(ackId = id, message = Some(Message(id, payload))))
+      val message = Message(messageId = id, payload = payload, correlationId = correlationId)
+      val _ = queue(topic).put(id, PulledMessage(ackId = id, message = Some(message)))
       id
 
     def messages(topic: String): Seq[PulledMessage] = queue(topic).values.toSeq
 
     override def publish(in: PublishRequest, metadata: Metadata): Future[PublishResponse] =
-      val id = enqueue(in.topicId, in.payload)
+      lastPublish = Some(in)
+      // Carry the publish's correlation id onto the queued message, as a real broker would, so the
+      // consume side can adopt it (request-tracing end-to-end).
+      val id = enqueue(in.topicId, in.payload, in.correlationId)
       Future.successful(PublishResponse(messageId = id, deduplicated = false))
 
     override def pull(in: PullRequest, metadata: Metadata): Future[PullResponse] =

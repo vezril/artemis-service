@@ -53,7 +53,11 @@ final class UploadService(
     genJobId: () => String = () => UUID.randomUUID().toString
 )(using system: ActorSystem[?], timeout: Timeout):
 
-  private given scala.concurrent.ExecutionContext = system.executionContext
+  // MDC-propagating so the correlation id the HTTP edge set on the request thread rides this
+  // service's async chain onto the published `ProcessMediaJob.correlation_id` and the Apollo call
+  // metadata (request-tracing outbound propagation from the ingest path).
+  private given scala.concurrent.ExecutionContext =
+    me.cference.artemis.tracing.MdcPropagatingExecutionContext(system.executionContext)
   private val Bucket = "media"
 
   def upload(

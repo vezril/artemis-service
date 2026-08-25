@@ -19,6 +19,7 @@ import me.cference.artemis.http.{
   MetricsRoutes,
   RelatedTagsRoutes,
   ReprocessRoutes,
+  RequestTracing,
   ReviewRoutes,
   SavedSearchRoutes,
   SearchRoutes,
@@ -235,7 +236,12 @@ object Main:
         reviewRoutes.routes ~
         reprocessRoutes.routes
 
-    HttpServer.bind(apiRoutes, httpCfg.host, httpCfg.port).onComplete {
+    // Wrap the whole surface in request-tracing: mint a correlation id per request (ignoring any
+    // client value), MDC it for the request's logs, access-log entry/completion, and echo
+    // X-Correlation-Id on every response (incl. 4xx/5xx/404).
+    val tracedRoutes: Route = RequestTracing.withCorrelationId(apiRoutes)
+
+    HttpServer.bind(tracedRoutes, httpCfg.host, httpCfg.port).onComplete {
       case Success(binding) =>
         HttpServer.wireShutdown(binding, readiness)
         log.info(
