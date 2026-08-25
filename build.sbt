@@ -62,7 +62,8 @@ lazy val logbackVersion = "1.5.12"
 // Security-driven overrides of transitive deps flagged HIGH by the release image scan (Trivy).
 // Pekko/grpc pull older versions; these force patched ones (same compat line where possible). Kept
 // as whole-suite bumps so netty/grpc/jackson modules never end up on mixed versions.
-lazy val nettyVersion = "4.1.135.Final" // via pekko-http / pekko-grpc / grpc (was 4.1.112.Final)
+lazy val nettyVersion =
+  "4.1.136.Final" // via pekko-http / pekko-grpc / grpc (4.1.135→.136: netty-codec(-http) HIGH CVEs)
 lazy val grpcVersion =
   "1.75.0" // via pekko-grpc-runtime (was 1.67.1; shaded-netty CVE fixed in 1.75)
 lazy val jacksonVersion =
