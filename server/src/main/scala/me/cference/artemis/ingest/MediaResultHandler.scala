@@ -32,7 +32,10 @@ final class MediaResultHandler(
     tagJobs: TagJobPublisher = TagJobPublisher.none
 )(using system: ActorSystem[?], timeout: Timeout):
 
-  private given scala.concurrent.ExecutionContext = system.executionContext
+  // MDC-propagating so the correlation id adopted by the consumer rides this handler's async work
+  // (the activation/dup-flag/tag-publish Futures) onto their log lines (request-tracing).
+  private given scala.concurrent.ExecutionContext =
+    me.cference.artemis.tracing.MdcPropagatingExecutionContext(system.executionContext)
   private val log = LoggerFactory.getLogger(getClass)
 
   def onProcessed(m: MediaProcessed): Future[Unit] =

@@ -3,8 +3,9 @@ package me.cference.artemis.hermes
 import codex.messages.v1.{MediaFailed, MediaProcessed, TagSuggestions}
 import me.cference.artemis.ingest.MediaResultHandler
 import me.cference.artemis.messages.MediaMessages
+import me.cference.artemis.tracing.{CorrelationId, MdcPropagatingExecutionContext}
 import me.cference.hermesmq.grpc.{AckRequest, PullRequest, PulledMessage}
-import org.slf4j.LoggerFactory
+import org.slf4j.{LoggerFactory, MDC}
 import scalapb.{GeneratedMessage, GeneratedMessageCompanion}
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -34,6 +35,11 @@ final class HermesMediaResultConsumer(
     tagSuggestionsSub: String = "",
     tagHandler: TagSuggestions => Future[Unit] = _ => Future.unit
 )(using ec: ExecutionContext):
+
+  // The per-message handle chain runs on an MDC-propagating EC so the adopted `correlationId` (set
+  // in the MDC below) survives the async decode → handle → ack hops (request-tracing). A plain val
+  // (not a given) so it doesn't clash with the injected `ec` the rest of the consumer uses.
+  private val tracingEc: ExecutionContext = MdcPropagatingExecutionContext(ec)
 
   private val log = LoggerFactory.getLogger(getClass)
 
@@ -97,18 +103,27 @@ final class HermesMediaResultConsumer(
             )
             Future.successful(None)
           case Right(decoded) =>
-            // `Future.unit.flatMap` so a handler that throws *synchronously* (before returning its
-            // Future) still folds into a failed Future here — keeping one message's failure from
-            // aborting `Future.sequence` and losing its siblings' acks (per-message isolation).
-            Future.unit
-              .flatMap(_ => handle(decoded))
-              .map(_ => Some(pulled.ackId))
-              .recover { case NonFatal(e) =>
-                log.warn(
-                  "handler failed for message {} from {} ({}); leaving un-acked for retry",
-                  pulled.ackId,
-                  subscription,
-                  e.getMessage
-                )
-                None
-              }
+            // Adopt the delivery's correlation id (mint if empty) into the MDC so the handling of
+            // this result — including the async activation/apply work — logs under the SAME id as
+            // the ingest that caused it (request-tracing). Set on this thread + `try/finally`
+            // removed after the chain is SUBMITTED; the propagating EC snapshots it onto each hop,
+            // so the captured copy rides the async work even once this thread's MDC is cleared.
+            MDC.put(CorrelationId.MdcKey, CorrelationId.adoptOrMint(message.correlationId))
+            try
+              // `Future.unit.flatMap` so a handler that throws *synchronously* (before returning
+              // its Future) still folds into a failed Future here — keeping one message's failure
+              // from aborting `Future.sequence` and losing its siblings' acks (per-message
+              // isolation).
+              Future.unit
+                .flatMap(_ => handle(decoded))(tracingEc)
+                .map(_ => Some(pulled.ackId))(tracingEc)
+                .recover { case NonFatal(e) =>
+                  log.warn(
+                    "handler failed for message {} from {} ({}); leaving un-acked for retry",
+                    pulled.ackId,
+                    subscription,
+                    e.getMessage
+                  )
+                  None
+                }(tracingEc)
+            finally MDC.remove(CorrelationId.MdcKey)

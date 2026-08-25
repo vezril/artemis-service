@@ -4,6 +4,7 @@ import codex.messages.v1.TagJob
 import com.google.protobuf.ByteString as ProtoBytes
 import me.cference.artemis.ingest.TagJobPublisher
 import me.cference.artemis.messages.MediaMessages
+import me.cference.artemis.tracing.CorrelationId
 import me.cference.hermesmq.grpc.PublishRequest
 
 import java.nio.charset.StandardCharsets.UTF_8
@@ -24,7 +25,9 @@ final class HermesTagJobPublisher(client: HermesClient, topic: String)(using ec:
       .publish(
         PublishRequest(
           topicId = topic,
-          payload = ProtoBytes.copyFrom(MediaMessages.toJson(job), UTF_8)
+          payload = ProtoBytes.copyFrom(MediaMessages.toJson(job), UTF_8),
+          // Propagate the current correlation id onto the published tag-job (request-tracing).
+          correlationId = CorrelationId.current().getOrElse("")
         )
       )
       .map(_ => ())

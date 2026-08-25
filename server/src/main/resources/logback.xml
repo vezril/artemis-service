@@ -18,17 +18,26 @@
 
   <appender name="text" class="ch.qos.logback.core.ConsoleAppender">
     <encoder>
-      <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level %logger{36} [%thread] - %msg%n</pattern>
+      <!-- [%X{correlationId}] surfaces the request-tracing id locally too (empty when none). -->
+      <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level %logger{36} [%thread] [%X{correlationId:-}] - %msg%n</pattern>
     </encoder>
   </appender>
 
   <appender name="json" class="ch.qos.logback.core.ConsoleAppender">
+    <!-- MDC entries (incl. correlationId) are promoted to top-level JSON fields automatically. -->
     <encoder class="net.logstash.logback.encoder.LogstashEncoder">
       <customFields>{"service":"artemis"}</customFields>
     </encoder>
   </appender>
 
-  <root level="INFO">
+  <!--
+    Verbosity is env-configurable without a rebuild (request-tracing): LOG_LEVEL sets the root
+    (all libraries), LOG_LEVEL_ARTEMIS independently raises Artemis's OWN code — e.g. TRACE the
+    service while keeping Pekko at INFO. Both default to INFO.
+  -->
+  <logger name="me.cference.artemis" level="${LOG_LEVEL_ARTEMIS:-INFO}"/>
+
+  <root level="${LOG_LEVEL:-INFO}">
     <appender-ref ref="${LOG_APPENDER}"/>
   </root>
 
