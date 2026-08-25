@@ -85,7 +85,9 @@ final class SavedSearchRoutesSpec
       None,
       None,
       None,
-      Instant.parse("2026-01-01T00:00:00Z")
+      Instant.parse("2026-01-01T00:00:00Z"),
+      None,
+      Seq.empty
     )
 
   private def json(body: String) = HttpEntity(ContentTypes.`application/json`, body)

@@ -26,7 +26,9 @@ final case class PostSummary(
     duration: Option[Long],
     parent: Option[String],
     duplicateOf: Option[String],
-    createdAt: String
+    createdAt: String,
+    md5: Option[String],
+    derivatives: List[DerivativeRef]
 )
 
 final case class SearchResponse(posts: List[PostSummary], nextCursor: Option[String])
@@ -48,7 +50,7 @@ final case class TagSuggestionResponse(
 
 object SearchJson:
 
-  given RootJsonFormat[PostSummary] = jsonFormat12(PostSummary.apply)
+  given RootJsonFormat[PostSummary] = jsonFormat14(PostSummary.apply)
   given RootJsonFormat[SearchResponse] = jsonFormat2(SearchResponse.apply)
   given RootJsonFormat[FacetTag] = jsonFormat2(FacetTag.apply)
   given RootJsonFormat[FacetCategory] = jsonFormat2(FacetCategory.apply)
@@ -75,7 +77,9 @@ object SearchJson:
       duration = r.duration,
       parent = r.parentId,
       duplicateOf = r.duplicateOf,
-      createdAt = r.createdAt.toString
+      createdAt = r.createdAt.toString,
+      md5 = r.md5,
+      derivatives = DerivativeRef.refsOf(r.derivatives)
     )
 
   def searchResponse(rows: Seq[PostRow], nextCursor: Option[String]): SearchResponse =
