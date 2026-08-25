@@ -291,6 +291,30 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
     }
 
   /**
+   * The single-post analogue of [[softDeletedBefore]]: the EXACT blob keys to delete 1:1 for the
+   * soft-deleted post `id` (the reconstructed original + the projected derivative keys), or `None`
+   * when the post is not currently `deleted` (never existed, still active, or already purged).
+   * Backs the immediate hard-purge admin endpoint; the same row extraction as the retention
+   * work-list.
+   */
+  def purgeTargetFor(id: String): Future[Option[PurgeTarget]] =
+    query(
+      """SELECT id, md5, filetype, derivatives::text AS derivatives FROM posts
+        |WHERE id = $1 AND status = 'deleted'""".stripMargin,
+      _.bind(0, id)
+    ) { row =>
+      val md5 = row.get("md5", classOf[String])
+      val ext = Option(row.get("filetype", classOf[String]))
+        .flatMap(_.split('/').lastOption)
+        .filter(_.nonEmpty)
+        .getOrElse("bin")
+      val originalKey = s"originals/${md5.take(2)}/$md5.$ext"
+      val derivativeKeys =
+        ReadModelRepository.derivativeObjectKeys(row.get("derivatives", classOf[String]))
+      PurgeTarget(row.get("id", classOf[String]), originalKey +: derivativeKeys)
+    }.map(_.headOption)
+
+  /**
    * Every md5 still referenced by a post (any non-purged status, including `pending` in-flight
    * uploads) — the orphan sweep's protected set: a blob whose md5 is here is NOT debris.
    */
