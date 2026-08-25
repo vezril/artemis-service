@@ -182,7 +182,7 @@ lazy val server = (project in file("server"))
       "com.dimafeng" %% "testcontainers-scala-scalatest" % testcontainersVersion % Test,
       "com.dimafeng" %% "testcontainers-scala-postgresql" % testcontainersVersion % Test,
       // JDBC driver used by tests to apply DDL and assert journal rows.
-      "org.postgresql" % "postgresql" % "42.7.4" % Test
+      "org.postgresql" % "postgresql" % "42.7.13" % Test
     ),
     // Security overrides: force patched versions of transitive deps the release image scan (Trivy)
     // flags HIGH. Whole-suite bumps so no module is left on a mismatched version.
