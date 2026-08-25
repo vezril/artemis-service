@@ -9,6 +9,7 @@ import io.r2dbc.spi.{
   Statement
 }
 import me.cference.artemis.config.PostgresConfig
+import me.cference.artemis.domain.Derivative
 import reactor.core.publisher.{Flux, Mono}
 
 import java.time.{Instant, OffsetDateTime, ZoneOffset}
@@ -17,7 +18,9 @@ import scala.jdk.CollectionConverters.*
 
 /**
  * One row of the `posts` read model, carrying the denormalized fields the search DSL and the ITs
- * assert on. `tags` is the GIN-indexed array; `score`/`favCount` the maintained counters.
+ * assert on. `tags` is the GIN-indexed array; `score`/`favCount` the maintained counters. `md5` +
+ * `derivatives` back the read API's media refs (search summary): `md5` is `None` for a media-less
+ * row, and `derivatives` is empty until processing records them.
  */
 final case class PostRow(
     id: String,
@@ -31,7 +34,9 @@ final case class PostRow(
     duration: Option[Long],
     parentId: Option[String],
     duplicateOf: Option[String],
-    createdAt: Instant
+    createdAt: Instant,
+    md5: Option[String],
+    derivatives: Seq[Derivative]
 )
 
 /**
@@ -99,10 +104,14 @@ final case class ReprocessInfo(
  * read-current-delta `post_count` maintenance, and status-guarded delete/restore count adjustments.
  */
 object ReadModelRepository:
-  /** The `posts` columns projected into a [[PostRow]] — shared by point reads and DSL search. */
+  /**
+   * The `posts` columns projected into a [[PostRow]] — shared by point reads and DSL search.
+   * `derivatives` is read as `::text` (JSONB rendered to a JSON string) so [[parseDerivatives]] can
+   * fold it into the row's media refs.
+   */
   val PostColumns: String =
     "id, tags, status, score, fav_count, rating, width, height, duration, parent_id, " +
-      "duplicate_of, created_at"
+      "duplicate_of, created_at, md5, derivatives::text AS derivatives"
 
   /**
    * Parse the derivative object keys (within the media bucket) from the projected `derivatives`
@@ -120,6 +129,25 @@ object ReadModelRepository:
               case JsString(ref) if ref.contains('/') =>
                 ref.substring(ref.indexOf('/') + 1)
             }
+          case _ => None
+        }
+      case _ => Seq.empty
+
+  /**
+   * Parse the full `[{kind, ref}]` derivatives out of the projected `derivatives` JSON into domain
+   * [[Derivative]] values (`ref` = `<bucket>/<object>`). Backs the read API's media refs on the
+   * search summary; the http layer derives each `variant` from the ref. Total: a malformed/absent
+   * element (missing `kind`/`ref`) is skipped rather than throwing over a legacy row.
+   */
+  def parseDerivatives(derivativesJson: String): Seq[Derivative] =
+    import spray.json.*
+    derivativesJson.parseJson match
+      case JsArray(elems) =>
+        elems.flatMap {
+          case JsObject(fields) =>
+            (fields.get("kind"), fields.get("ref")) match
+              case (Some(JsString(kind)), Some(JsString(ref))) => Some(Derivative(kind, ref))
+              case _ => None
           case _ => None
         }
       case _ => Seq.empty
@@ -661,7 +689,11 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
       duration = Option(row.get("duration", classOf[java.lang.Long])).map(_.longValue),
       parentId = Option(row.get("parent_id", classOf[String])),
       duplicateOf = Option(row.get("duplicate_of", classOf[String])),
-      createdAt = row.get("created_at", classOf[OffsetDateTime]).toInstant
+      createdAt = row.get("created_at", classOf[OffsetDateTime]).toInstant,
+      md5 = Option(row.get("md5", classOf[String])),
+      derivatives = Option(row.get("derivatives", classOf[String]))
+        .map(ReadModelRepository.parseDerivatives)
+        .getOrElse(Seq.empty)
     )
 
   /**

@@ -1,6 +1,7 @@
 package me.cference.artemis.http
 
 import com.typesafe.config.ConfigFactory
+import me.cference.artemis.domain.Derivative
 import me.cference.artemis.projection.{FacetEntry, PostRow, TagSuggestion}
 import me.cference.artemis.search.{SearchError, SearchPage}
 import org.apache.pekko.http.scaladsl.model.StatusCodes
@@ -43,7 +44,12 @@ final class SearchRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
       duration = None,
       parentId = None,
       duplicateOf = None,
-      createdAt = Instant.parse("2026-01-01T00:00:00Z")
+      createdAt = Instant.parse("2026-01-01T00:00:00Z"),
+      md5 = Some("d41d8cd98f00b204e9800998ecf8427e"),
+      derivatives = Seq(
+        Derivative("thumbnail", "media/d4/d41d8cd98f00b204e9800998ecf8427e/thumb.webp"),
+        Derivative("sample", "media/d4/d41d8cd98f00b204e9800998ecf8427e/sample.webp")
+      )
     )
 
   private val page = SearchPage(Seq(row("p1"), row("p2")), Some("cursor-xyz"))
@@ -86,6 +92,20 @@ final class SearchRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
         body should include("\"score\":42")
         body should include("\"rating\":\"s\"")
         body should include("\"nextCursor\":\"cursor-xyz\"")
+      }
+    }
+
+    "expose each summary's md5 and derivative refs (kind + gateway variant filename)" in {
+      Get("/posts?tags=1girl%20cat_ears") ~> routes ~> check {
+        status shouldBe StatusCodes.OK
+        val body = responseAs[String]
+        body should include("\"md5\":\"d41d8cd98f00b204e9800998ecf8427e\"")
+        body should include("\"kind\":\"thumbnail\"")
+        body should include("\"variant\":\"thumb.webp\"")
+        body should include("\"kind\":\"sample\"")
+        body should include("\"variant\":\"sample.webp\"")
+        // The raw Apollo object key / bucket prefix never leaks — only the gateway variant.
+        body should not include "media/d4"
       }
     }
 

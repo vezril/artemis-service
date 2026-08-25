@@ -3,6 +3,7 @@ package me.cference.artemis.search
 import com.dimafeng.testcontainers.{ForAllTestContainer, PostgreSQLContainer}
 import me.cference.artemis.config.PostgresConfig
 import me.cference.artemis.domain.Tag
+import me.cference.artemis.http.{DerivativeRef, SearchJson}
 import me.cference.artemis.projection.ReadModelRepository
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.concurrent.ScalaFutures
@@ -106,6 +107,30 @@ final class SearchQueryIT
            |VALUES
            |  ('$id', $arr, '$rating', $score, 0, 100, 100, $dur, 'image/png',
            |   'd41d8cd98f00b204e9800998ecf8427e', '$status', '$createdAt'::timestamptz)""".stripMargin
+      )
+    }
+
+  /**
+   * Insert a row carrying explicit media refs: an optional `md5` (NULL for a media-less row) and a
+   * literal `derivatives` JSON array. Tagged with a unique marker so it never perturbs the other
+   * tag-anchored queries in this suite.
+   */
+  private def seedWithMedia(
+      id: String,
+      tags: Seq[String],
+      md5: Option[String],
+      derivativesJson: String,
+      status: String
+  ): Unit =
+    val arr = tags.map(t => s"'$t'").mkString("ARRAY[", ",", "]::text[]")
+    val md5Sql = md5.map(m => s"'$m'").getOrElse("NULL")
+    withJdbc { st =>
+      val _ = st.execute(
+        s"""INSERT INTO posts
+           |  (id, tags, rating, score, fav_count, width, height, filetype, md5, derivatives, status, created_at)
+           |VALUES
+           |  ('$id', $arr, 's', 0, 0, 100, 100, 'image/png', $md5Sql,
+           |   '$derivativesJson'::jsonb, '$status', '2026-02-01T00:00:00Z'::timestamptz)""".stripMargin
       )
     }
 
@@ -239,6 +264,45 @@ final class SearchQueryIT
       val page3 = run(p, cursor = page2.nextCursor, pageSize = 2)
       page3.rows shouldBe empty
       page3.nextCursor shouldBe None
+    }
+
+    "expose md5 + derivative {kind, variant} on an active post's summary" in {
+      val md5 = "aabbccddeeff00112233445566778899"
+      seedWithMedia(
+        "refs_a",
+        Seq("refs_marker", "refs_active"),
+        Some(md5),
+        s"""[{"kind":"thumbnail","ref":"media/aa/$md5/thumb.webp"},
+           | {"kind":"sample","ref":"media/aa/$md5/sample.webp"}]""".stripMargin
+          .replaceAll("\\s", ""),
+        "active"
+      )
+      val row = run(plan(includes = tagSet("refs_active"))).rows
+        .find(_.id == "refs_a")
+        .getOrElse(fail("refs_a not returned"))
+
+      // The projection SELECT pulls md5 + derivatives into the row...
+      row.md5 shouldBe Some(md5)
+      row.derivatives.map(_.kind) should contain theSameElementsAs Seq("thumbnail", "sample")
+
+      // ...and the wire summary derives the gateway variant = the ref's last path segment.
+      val summary = SearchJson.summaryOf(row)
+      summary.md5 shouldBe Some(md5)
+      summary.derivatives should contain theSameElementsAs Seq(
+        DerivativeRef("thumbnail", "thumb.webp"),
+        DerivativeRef("sample", "sample.webp")
+      )
+    }
+
+    "degrade cleanly for a media-less post (null md5, empty derivatives)" in {
+      seedWithMedia("refs_none", Seq("refs_marker", "refs_pending"), None, "[]", "pending")
+      val summary = run(plan(includes = tagSet("refs_pending"))).rows
+        .find(_.id == "refs_none")
+        .map(SearchJson.summaryOf)
+        .getOrElse(fail("refs_none not returned"))
+
+      summary.md5 shouldBe None
+      summary.derivatives shouldBe empty
     }
 
     "surface a compile failure as a Left rather than throwing" in {

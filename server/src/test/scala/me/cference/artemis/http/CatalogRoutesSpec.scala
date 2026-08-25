@@ -85,9 +85,13 @@ final class CatalogRoutesSpec
    * in-scope HTTP surface can't do — RecordProcessed is the ingest milestone M8).
    */
   private def process(id: String): Unit =
+    processWith(id, Vector.empty)
+
+  /** Promote a Pending post to Active carrying the given media derivatives. */
+  private def processWith(id: String, derivatives: Vector[Derivative]): Unit =
     val probe = testKit.createTestProbe[StatusReply[Done]]()
     postFor(id) ! PostEntity.Execute(
-      RecordProcessed(Dimensions.unsafe(100, 200, None), Vector.empty, Phash("ph"), Instant.now()),
+      RecordProcessed(Dimensions.unsafe(100, 200, None), derivatives, Phash("ph"), Instant.now()),
       probe.ref
     )
     val _ = probe.receiveMessage()
@@ -144,6 +148,44 @@ final class CatalogRoutesSpec
         val body = responseAs[String]
         body should include("\"id\":\"r1\"")
         body should include("\"status\":\"pending\"")
+      }
+    }
+
+    "expose an active post's derivative refs as {kind, variant} filenames" in {
+      Post(
+        "/posts",
+        json("""{"id":"d1","md5":"abc","filetype":"image/png"}""")
+      ) ~> routes ~> check(status shouldBe StatusCodes.Created)
+      processWith(
+        "d1",
+        Vector(
+          Derivative("thumbnail", "media/ab/abc/thumb.webp"),
+          Derivative("sample", "media/ab/abc/sample.webp")
+        )
+      )
+      Get("/posts/d1") ~> routes ~> check {
+        status shouldBe StatusCodes.OK
+        val body = responseAs[String]
+        body should include("\"status\":\"active\"")
+        body should include("\"kind\":\"thumbnail\"")
+        body should include("\"variant\":\"thumb.webp\"")
+        body should include("\"kind\":\"sample\"")
+        body should include("\"variant\":\"sample.webp\"")
+        // Only the gateway-relative variant is exposed, never the raw bucket/object ref.
+        body should not include "media/ab"
+      }
+    }
+
+    "return an empty derivatives list for a pending (media-less) post" in {
+      Post(
+        "/posts",
+        json("""{"id":"d2","md5":"abc","filetype":"image/png"}""")
+      ) ~> routes ~> check(status shouldBe StatusCodes.Created)
+      Get("/posts/d2") ~> routes ~> check {
+        status shouldBe StatusCodes.OK
+        val body = responseAs[String]
+        body should include("\"status\":\"pending\"")
+        body should include("\"derivatives\":[]")
       }
     }
   }
