@@ -37,7 +37,7 @@ import me.cference.artemis.ingest.{
   TagSuggestionHandler,
   UploadService
 }
-import me.cference.artemis.media.ApolloMediaSource
+import me.cference.artemis.media.{ApolloMediaSource, MediaResolver}
 import me.cference.artemis.metrics.MetricsRegistry
 import me.cference.artemis.persistence.{
   PersistenceReadiness,
@@ -200,7 +200,17 @@ object Main:
       poolReadService.poolPosts
     )
     val catalogRoutes = CatalogRoutes(postFor, poolFor)
-    val mediaRoutes = MediaRoutes(new ApolloMediaSource(apolloClient))
+    // Media resolution: the read model's STORED derivative refs first (the exact keys
+    // Hephaestus reported), with the key-layout convention only as a fallback (e.g.
+    // projection lag right after processing) — the convention alone once drifted from
+    // Hephaestus's layout and every image 404'd.
+    val resolveMediaRef: (String, String) => Future[codex.messages.v1.ObjectRef] =
+      (md5, variant) =>
+        readModel.mediaObjectRef(md5, variant).map {
+          case Some((bucket, obj)) => codex.messages.v1.ObjectRef(bucket = bucket, `object` = obj)
+          case None => MediaResolver.resolve(md5, variant)
+        }
+    val mediaRoutes = MediaRoutes(new ApolloMediaSource(apolloClient), resolveMediaRef)
     // Adapt the upload seam to the route's 3-arg shape (dedup metadata-merge params default empty).
     val uploadRoutes = UploadRoutes((bytes, ct, mt) => uploadService.upload(bytes, ct, mt))
     val savedSearchRoutes = SavedSearchRoutes(savedSearchesRef, searchService.search)
