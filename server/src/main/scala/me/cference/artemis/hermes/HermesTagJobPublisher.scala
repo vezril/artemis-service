@@ -27,7 +27,9 @@ final class HermesTagJobPublisher(client: HermesClient, topic: String)(using ec:
           topicId = topic,
           payload = ProtoBytes.copyFrom(MediaMessages.toJson(job), UTF_8),
           // Propagate the current correlation id onto the published tag-job (request-tracing).
-          correlationId = CorrelationId.current().getOrElse("")
+          correlationId = CorrelationId.current().getOrElse(""),
+          // Identify Artemis to the broker's per-producer observability (metrics + console).
+          producerId = HermesIdentity.ProducerId
         )
       )
       .map(_ => ())
