@@ -53,6 +53,21 @@ final class SqlCompilerSpec extends AnyWordSpec with Matchers with EitherValues:
 
   // --- 4.1 tag WHERE core -------------------------------------------------
 
+  "SqlCompiler (browse-all)" should {
+
+    "compile the EMPTY plan to the visible catalog, newest first" in {
+      // The browse-all short-circuit (search-dsl "An empty query is browse-all") hands the
+      // compiler a fully empty plan: only the status default remains in the WHERE, and the
+      // default ordering is id DESC (ULIDs → most recent first).
+      val sql = sqlOf(plan())
+      sql should include("status <> 'deleted'")
+      sql should include("ORDER BY created_at DESC, id DESC")
+      sql should include("LIMIT")
+      (sql should not).include("tags @>")
+      (sql should not).include("tags &&")
+    }
+  }
+
   "SqlCompiler (4.1 tag WHERE)" should {
 
     "compile includes to a GIN set-containment `tags @>` with a text[] param" in {

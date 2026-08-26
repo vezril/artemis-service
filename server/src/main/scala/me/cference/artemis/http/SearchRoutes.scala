@@ -49,24 +49,25 @@ final class SearchRoutes(
   def routes: Route =
     concat(facetsRoute, postsRoute, autocompleteRoute, poolMembersRoute, poolsListRoute)
 
-  // GET /posts?tags=<DSL>&order=&cursor=&limit=
+  // GET /posts?tags=<DSL>&order=&cursor=&limit= — `tags` optional: absent/blank is browse-all
+  // (the whole visible catalog, newest first; search-dsl "An empty query is browse-all").
   private def postsRoute: Route =
     (path("posts") & get & parameters(
-      "tags",
+      "tags".optional,
       "order".optional,
       "cursor".optional,
       "limit".as[Int].optional
     )) { (tags, order, cursor, limit) =>
-      onSuccess(searchFn(tags, order, cursor, limit.getOrElse(DefaultPageSize))) {
+      onSuccess(searchFn(tags.getOrElse(""), order, cursor, limit.getOrElse(DefaultPageSize))) {
         case Right(page) => complete(SearchJson.searchResponse(page.rows, page.nextCursor))
         case Left(err) => complete(badRequest(err))
       }
     }
 
-  // GET /posts/facets?tags=<DSL>
+  // GET /posts/facets?tags=<DSL> — `tags` optional: absent/blank aggregates the whole catalog.
   private def facetsRoute: Route =
-    (path("posts" / "facets") & get & parameter("tags")) { tags =>
-      onSuccess(facetsFn(tags)) {
+    (path("posts" / "facets") & get & parameter("tags".optional)) { tags =>
+      onSuccess(facetsFn(tags.getOrElse(""))) {
         case Right(entries) => complete(SearchJson.facetsResponse(entries))
         case Left(err) => complete(badRequest(err))
       }
