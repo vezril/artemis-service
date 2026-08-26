@@ -69,8 +69,34 @@ final class SearchServiceSpec extends AnyWordSpec with Matchers with ScalaFuture
         case other => fail(s"expected BadQuery, got $other")
     }
 
-    "reject an empty query as a BadQuery" in {
-      service().search("", None, None, 20).futureValue shouldBe a[Left[?, ?]]
+    "treat a blank query as browse-all: an empty plan, executed (not rejected)" in {
+      var captured: Option[QueryPlan] = None
+      val svc = service(execute = (p, _, _) => {
+        captured = Some(p); Future.successful(Right(page))
+      })
+      svc.search("", None, None, 20).futureValue shouldBe Right(page)
+      svc.search("   ", None, None, 20).futureValue shouldBe Right(page)
+      // The plan is EMPTY (no includes/excludes/groups/predicates) — the compiler's status
+      // default + id DESC ordering make it the whole visible catalog, newest first.
+      captured shouldBe Some(QueryPlan(Set.empty, Set.empty, Nil, Nil, None, None))
+    }
+
+    "apply the order= override to browse-all" in {
+      var captured: Option[String] = None
+      val svc = service(execute = (p, _, _) => {
+        captured = p.order; Future.successful(Right(page))
+      })
+      svc.search("", Some("score"), None, 20).futureValue shouldBe Right(page)
+      captured shouldBe Some("score")
+    }
+
+    "aggregate facets over the whole catalog for a blank query" in {
+      var sawPlan: Option[QueryPlan] = None
+      val svc = service(computeFacets = p => {
+        sawPlan = Some(p); Future.successful(Right(Nil))
+      })
+      svc.facets("").futureValue shouldBe Right(Nil)
+      sawPlan shouldBe Some(QueryPlan(Set.empty, Set.empty, Nil, Nil, None, None))
     }
 
     "map a compile failure (unsupported metatag) to a 400 SearchError" in {

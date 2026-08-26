@@ -54,15 +54,26 @@ final class SearchService(
       rawTags: String,
       order: Option[String]
   ): Future[Either[SearchError, QueryPlan]] =
-    SearchParser.parse(rawTags) match
-      case Left(pe) => Future.successful(Left(SearchError.BadQuery(pe.message)))
-      case Right(query) =>
-        loadGraph().flatMap { graph =>
-          SearchPlanner.plan(query, graph, expander).map {
-            case Left(planErr) => Left(SearchError.Unplannable(planErr.message))
-            case Right(plan) => Right(applyOrderOverride(plan, order))
+    // A BLANK query is browse-all (search-dsl "An empty query is browse-all"): the whole visible
+    // catalog, default-ordered newest first. It short-circuits to an empty plan BEFORE the parser,
+    // so the parser's guardrails (EmptyQuery, NoPositiveAnchor for pure negations) are untouched —
+    // browse-all is the absence of a query, not a parse of one. The compiler's always-present
+    // `status <> 'deleted'` default keeps the WHERE clause valid, and the default ordering
+    // (`created_at DESC, id DESC`) is newest-first. Covers both `search` and `facets`.
+    if rawTags.trim.isEmpty then
+      Future.successful(
+        Right(applyOrderOverride(QueryPlan(Set.empty, Set.empty, Nil, Nil, None, None), order))
+      )
+    else
+      SearchParser.parse(rawTags) match
+        case Left(pe) => Future.successful(Left(SearchError.BadQuery(pe.message)))
+        case Right(query) =>
+          loadGraph().flatMap { graph =>
+            SearchPlanner.plan(query, graph, expander).map {
+              case Left(planErr) => Left(SearchError.Unplannable(planErr.message))
+              case Right(plan) => Right(applyOrderOverride(plan, order))
+            }
           }
-        }
 
   private def applyOrderOverride(plan: QueryPlan, order: Option[String]): QueryPlan =
     order.map(_.trim).filter(_.nonEmpty) match
