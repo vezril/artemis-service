@@ -108,6 +108,22 @@ final class SearchRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
 
   "GET /posts" should {
 
+    "accept a missing tags param as browse-all (empty query passed through)" in {
+      var seenTags: Option[String] = None
+      val capture: (String, Option[String], Option[String], Int) => Future[
+        Either[SearchError, SearchPage]
+      ] = (tags, _, _, _) => {
+        seenTags = Some(tags); Future.successful(Right(page))
+      }
+      val r =
+        new SearchRoutes(capture, facetsFn, autocompleteTagsFn, listPoolsFn, poolPostsFn).routes
+      Get("/posts") ~> r ~> check {
+        status shouldBe StatusCodes.OK
+        responseAs[String] should include("\"id\":\"p1\"")
+      }
+      seenTags shouldBe Some("")
+    }
+
     "return 200 with the matching post summaries and the next cursor" in {
       Get("/posts?tags=1girl%20cat_ears&order=score") ~> routes ~> check {
         status shouldBe StatusCodes.OK
@@ -143,6 +159,13 @@ final class SearchRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
   }
 
   "GET /posts/facets" should {
+
+    "accept a missing tags param (whole-catalog facets)" in {
+      Get("/posts/facets") ~> routes ~> check {
+        status shouldBe StatusCodes.OK
+        responseAs[String] should include("\"name\":\"1girl\"")
+      }
+    }
     "return 200 with facets grouped by category" in {
       Get("/posts/facets?tags=1girl") ~> routes ~> check {
         status shouldBe StatusCodes.OK
