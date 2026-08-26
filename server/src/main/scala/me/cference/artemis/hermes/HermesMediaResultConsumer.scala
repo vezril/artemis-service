@@ -65,18 +65,27 @@ final class HermesMediaResultConsumer(
   private def drain[A <: GeneratedMessage](subscription: String, handle: A => Future[Unit])(using
       companion: GeneratedMessageCompanion[A]
   ): Future[Int] =
-    client.pull(PullRequest(subscriptionId = subscription, max = maxMessages)).flatMap { response =>
-      Future
-        .sequence(response.messages.map(handleOne(subscription, _, handle)))
-        .flatMap { outcomes =>
-          val ackIds = outcomes.flatten
-          if ackIds.isEmpty then Future.successful(0)
-          else
-            client
-              .ack(AckRequest(subscriptionId = subscription, ackIds = ackIds))
-              .map(_ => ackIds.size)
-        }
-    }
+    client
+      // consumerId identifies Artemis to the broker's per-consumer observability.
+      .pull(
+        PullRequest(
+          subscriptionId = subscription,
+          max = maxMessages,
+          consumerId = HermesIdentity.ConsumerId
+        )
+      )
+      .flatMap { response =>
+        Future
+          .sequence(response.messages.map(handleOne(subscription, _, handle)))
+          .flatMap { outcomes =>
+            val ackIds = outcomes.flatten
+            if ackIds.isEmpty then Future.successful(0)
+            else
+              client
+                .ack(AckRequest(subscriptionId = subscription, ackIds = ackIds))
+                .map(_ => ackIds.size)
+          }
+      }
 
   /** Handle one pulled message; yields its ackId iff it decoded and its handler succeeded. */
   private def handleOne[A <: GeneratedMessage](
