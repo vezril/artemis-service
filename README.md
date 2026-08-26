@@ -134,7 +134,9 @@ Runtime config is HOCON with environment-variable overrides (no secrets committe
 | `PATCH` | `/posts/{id}/tags` · `/rating` | edit tags / rating |
 | `POST`/`DELETE` | `/posts/{id}/favorite` · `POST /posts/{id}/score` | favorite / score |
 | `POST` | `/pools`, `/pools/{id}/posts` · `PUT /pools/{id}/order` · `PATCH`/`DELETE /pools/{id}` | pool CRUD + membership |
-| `GET` | `/pools/{id}` | read a pool |
+| `GET` | `/pools/{id}` | read a pool (ordered id list, read-your-writes from the entity) |
+| `GET` | `/pools?cursor=&limit=` | list pools (name-ordered, keyset paged) with visible count + cover |
+| `GET` | `/pools/{id}/posts?cursor=&limit=` | a pool's members hydrated in order (keyset paged, same envelope as `/posts`) |
 | `GET` | `/media/{md5}/{variant}` | stream an Apollo derivative (HTTP `206` range support) |
 
 ## License

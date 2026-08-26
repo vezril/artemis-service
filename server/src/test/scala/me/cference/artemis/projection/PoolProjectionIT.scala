@@ -171,6 +171,33 @@ final class PoolProjectionIT
       }
     }
 
+    "renumber positions densely on remove so a later add never collides (D7)" in {
+      val id = PoolId.unsafe("pool-dense")
+      send(id, CreatePool(id, PoolName.unsafe("Dense"), now))
+      send(id, AddPost(pid("pa"), now))
+      send(id, AddPost(pid("pb"), now))
+      send(id, AddPost(pid("pc"), now))
+      // Remove the MIDDLE member, then add a new one. Without renumber-on-remove the survivors would
+      // be {pa:0, pc:2} and the append (position = COUNT(*) = 2) would COLLIDE with pc at 2.
+      send(id, RemovePost(pid("pb"), now))
+      send(id, AddPost(pid("pd"), now))
+
+      runProjection {
+        eventually {
+          // Dense, unique, gap-free, order preserved — no duplicate position, no missing 0.
+          repo.poolPosts("pool-dense").futureValue shouldBe Seq(("pa", 0), ("pc", 1), ("pd", 2))
+        }
+      }
+
+      // And removing the FIRST member re-bases position 0 onto the next survivor.
+      send(id, RemovePost(pid("pa"), now))
+      runProjection {
+        eventually {
+          repo.poolPosts("pool-dense").futureValue shouldBe Seq(("pc", 0), ("pd", 1))
+        }
+      }
+    }
+
     "remove the pool and its pool_posts on delete" in {
       val id = PoolId.unsafe("pool-3")
       send(id, CreatePool(id, PoolName.unsafe("Doomed"), now))
