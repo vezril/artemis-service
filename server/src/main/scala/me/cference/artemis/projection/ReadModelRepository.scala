@@ -625,10 +625,29 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
       ).map(_ => ())
     }
 
+  /**
+   * Remove a member, then RENUMBER the survivors to a dense 0-based sequence (preserving relative
+   * order) so `position` stays a faithful mirror of the entity's ordered vector. Without this,
+   * `removePoolPost` would leave a gap and the next `addPoolPost` (which appends at `COUNT(*)`)
+   * would collide with a surviving position — producing duplicate positions and, after a
+   * first-member remove, no `position 0`. The pool read endpoints keyset on `(position, post_id)`
+   * so they are robust to legacy non-dense rows, but keeping the invariant here is the root-cause
+   * fix.
+   */
   def removePoolPost(poolId: String, postId: String): Future[Unit] =
     update(
       "DELETE FROM pool_posts WHERE pool_id = $1 AND post_id = $2",
       _.bind(0, poolId).bind(1, postId)
+    ).flatMap(_ =>
+      update(
+        """WITH ranked AS (
+          |  SELECT post_id, ROW_NUMBER() OVER (ORDER BY position, post_id) - 1 AS new_pos
+          |  FROM pool_posts WHERE pool_id = $1
+          |)
+          |UPDATE pool_posts pp SET position = r.new_pos
+          |FROM ranked r WHERE pp.pool_id = $1 AND pp.post_id = r.post_id""".stripMargin,
+        _.bind(0, poolId)
+      )
     ).map(_ => ())
 
   /** Rewrite positions so they match the given order (0-based). */
@@ -760,6 +779,99 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
     query("SELECT id, name FROM pools WHERE id = $1", _.bind(0, id)) { row =>
       (row.get("id", classOf[String]), row.get("name", classOf[String]))
     }.map(_.headOption)
+
+  // --- pool read endpoints (GET /pools, GET /pools/{id}/posts) ----------------
+
+  /**
+   * One keyset page of pools for `GET /pools`, ordered `lower(name) ASC, id ASC`. Returns `(id,
+   * name, postCount)` where `postCount` counts only VISIBLE (non-deleted) members, so a card's
+   * count matches the gallery it opens. The keyset predicate is the row-value form `(lower(name),
+   * id) > (after)` — never the `AND`-of-inequalities form, which would drop rows. Requests `limit +
+   * 1` rows so the caller can derive `nextCursor` from the retained tail.
+   */
+  def listPools(
+      after: Option[(String, String)],
+      limit: Int
+  ): Future[Seq[(String, String, Int)]] =
+    val visibleCount =
+      "(SELECT COUNT(*) FROM pool_posts pp JOIN posts po ON po.id = pp.post_id " +
+        "WHERE pp.pool_id = p.id AND po.status <> 'deleted')"
+    val (keyset, bind): (String, Statement => Statement) = after match
+      case Some((name, id)) =>
+        (
+          "WHERE (LOWER(p.name), p.id) > ($1, $2)",
+          (s: Statement) => s.bind(0, name).bind(1, id).bind(2, Integer.valueOf(limit + 1))
+        )
+      case None =>
+        ("", (s: Statement) => s.bind(0, Integer.valueOf(limit + 1)))
+    val limitParam = if after.isDefined then "$3" else "$1"
+    query(
+      s"""SELECT p.id, p.name, $visibleCount AS post_count
+         |FROM pools p
+         |$keyset
+         |ORDER BY LOWER(p.name) ASC, p.id ASC
+         |LIMIT $limitParam""".stripMargin,
+      bind
+    ) { row =>
+      (
+        row.get("id", classOf[String]),
+        row.get("name", classOf[String]),
+        row.get("post_count", classOf[java.lang.Long]).intValue
+      )
+    }
+
+  /**
+   * Covers for a page of pools: each pool's first VISIBLE member by `(position, post_id)`,
+   * hydrated. One batched query via `DISTINCT ON (pool_id)`; an `IN (…)` list of scalar-bound ids
+   * (not a Postgres array bind) keeps to the repo's existing bind plumbing. Empty input → no query.
+   * A pool with no visible member is simply absent from the map (→ `cover = None`).
+   */
+  def poolCovers(poolIds: Seq[String]): Future[Map[String, PostRow]] =
+    if poolIds.isEmpty then Future.successful(Map.empty)
+    else
+      val placeholders = poolIds.indices.map(i => s"$$${i + 1}").mkString(", ")
+      query(
+        s"""SELECT DISTINCT ON (pp.pool_id) pp.pool_id AS pool_id, ${ReadModelRepository.PostColumns}
+           |FROM pool_posts pp JOIN posts po ON po.id = pp.post_id
+           |WHERE pp.pool_id IN ($placeholders) AND po.status <> 'deleted'
+           |ORDER BY pp.pool_id, pp.position, pp.post_id""".stripMargin,
+        stmt => poolIds.zipWithIndex.foldLeft(stmt)((s, p) => s.bind(p._2, p._1))
+      )(row => (row.get("pool_id", classOf[String]), mapPostRow(row)))
+        .map(_.toMap)
+
+  /**
+   * One keyset page of a pool's members for `GET /pools/{id}/posts`, hydrated and in pool order.
+   * Keyset is the composite `(position, post_id)` — unique per pool even when `position` has legacy
+   * duplicates/gaps — so paging never drops or duplicates a member. Excludes soft-deleted members
+   * (as `GET /posts` does). Returns `(position, PostRow)`; the row's `id` is the `post_id`, so the
+   * caller has everything needed to build the next cursor. Requests `limit + 1`.
+   */
+  def poolPostsHydrated(
+      poolId: String,
+      after: Option[(Int, String)],
+      limit: Int
+  ): Future[Seq[(Int, PostRow)]] =
+    // $1 poolId, $2 limit; when paging, $3 position and $4 post_id.
+    val (keyset, bind): (String, Statement => Statement) = after match
+      case Some((pos, pid)) =>
+        (
+          "AND (pp.position, pp.post_id) > ($3, $4)",
+          (s: Statement) =>
+            s.bind(0, poolId)
+              .bind(1, Integer.valueOf(limit + 1))
+              .bind(2, Integer.valueOf(pos))
+              .bind(3, pid)
+        )
+      case None =>
+        ("", (s: Statement) => s.bind(0, poolId).bind(1, Integer.valueOf(limit + 1)))
+    query(
+      s"""SELECT pp.position AS position, ${ReadModelRepository.PostColumns}
+         |FROM pool_posts pp JOIN posts po ON po.id = pp.post_id
+         |WHERE pp.pool_id = $$1 AND po.status <> 'deleted' $keyset
+         |ORDER BY pp.position, pp.post_id
+         |LIMIT $$2""".stripMargin,
+      bind
+    )(row => (row.get("position", classOf[Integer]).intValue, mapPostRow(row)))
 
   // --- r2dbc plumbing --------------------------------------------------------
 

@@ -19,6 +19,7 @@ import me.cference.artemis.http.{
   HttpServer,
   MediaRoutes,
   MetricsRoutes,
+  PoolReadService,
   RelatedTagsRoutes,
   ReprocessRoutes,
   RequestTracing,
@@ -190,10 +191,13 @@ object Main:
 
     // Compose the HTTP surface SEARCH-FIRST so `/posts` and `/posts/facets` are claimed before
     // Catalog's `/posts/{id}` segment route could capture them.
+    val poolReadService = new PoolReadService(readModel)(using system.executionContext)
     val searchRoutes = new SearchRoutes(
       searchService.search,
       searchService.facets,
-      readModel.autocompleteTags
+      readModel.autocompleteTags,
+      poolReadService.listPools,
+      poolReadService.poolPosts
     )
     val catalogRoutes = CatalogRoutes(postFor, poolFor)
     val mediaRoutes = MediaRoutes(new ApolloMediaSource(apolloClient))

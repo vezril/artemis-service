@@ -78,8 +78,33 @@ final class SearchRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
         )
       )
 
+  // Fake pool reads: a cursor containing "bad" simulates an undecodable cursor (→ 400).
+  private val listPoolsFn: (Option[String], Int) => Future[Either[String, PoolListResponse]] =
+    (cursor, _) =>
+      if cursor.exists(_.contains("bad")) then Future.successful(Left("undecodable cursor"))
+      else
+        Future.successful(
+          Right(
+            PoolListResponse(
+              List(
+                PoolSummary("pool-a", "Alpha", 2, Some(SearchJson.summaryOf(row("cover-a")))),
+                PoolSummary("pool-b", "Bravo", 0, None)
+              ),
+              Some("next-pools")
+            )
+          )
+        )
+
+  private val poolPostsFn: (String, Option[String], Int) => Future[Either[String, SearchResponse]] =
+    (_, cursor, _) =>
+      if cursor.exists(_.contains("bad")) then Future.successful(Left("undecodable cursor"))
+      else
+        Future.successful(
+          Right(SearchResponse(List(SearchJson.summaryOf(row("m1"))), Some("next-members")))
+        )
+
   private def routes: Route =
-    new SearchRoutes(searchFn, facetsFn, autocompleteTagsFn).routes
+    new SearchRoutes(searchFn, facetsFn, autocompleteTagsFn, listPoolsFn, poolPostsFn).routes
 
   "GET /posts" should {
 
@@ -172,10 +197,64 @@ final class SearchRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
         Either[SearchError, SearchPage]
       ] =
         (_, _, _, _) => Future.successful(Right(SearchPage(Seq(row("p1")), None)))
-      val r = new SearchRoutes(noCursor, facetsFn, autocompleteTagsFn).routes
+      val r =
+        new SearchRoutes(noCursor, facetsFn, autocompleteTagsFn, listPoolsFn, poolPostsFn).routes
       Get("/posts?tags=1girl") ~> r ~> check {
         status shouldBe StatusCodes.OK
         responseAs[String] should not include "nextCursor"
+      }
+    }
+
+    "reach the pool-members handler for /pools/{id}/posts even composed with a /pools/{id} route" in {
+      // CatalogRoutes serves GET /pools/{id} via `path(Segment)` under `pathPrefix("pools")`, which
+      // would capture the members feed if it ran first. Composing search-first must intercept it.
+      import org.apache.pekko.http.scaladsl.server.Directives.*
+      val poolByIdRoute: Route =
+        pathPrefix("pools")(path(Segment)(id => get(complete(s"pool:$id"))))
+      val composed = routes ~ poolByIdRoute
+      Get("/pools/abc/posts") ~> composed ~> check {
+        status shouldBe StatusCodes.OK
+        responseAs[String] should include("\"id\":\"m1\"") // members handler, not "pool:abc"
+      }
+    }
+  }
+
+  "GET /pools" should {
+    "return 200 with pool cards (name, count, cover) and the next cursor" in {
+      Get("/pools") ~> routes ~> check {
+        status shouldBe StatusCodes.OK
+        val body = responseAs[String]
+        body should include("\"id\":\"pool-a\"")
+        body should include("\"name\":\"Alpha\"")
+        body should include("\"postCount\":2")
+        body should include("\"cover\":") // present for pool-a
+        body should include("\"postCount\":0") // pool-b empty
+        body should include("\"nextCursor\":\"next-pools\"")
+      }
+    }
+
+    "return 400 for a malformed cursor" in {
+      Get("/pools?cursor=bad") ~> routes ~> check {
+        status shouldBe StatusCodes.BadRequest
+        responseAs[String] should include("undecodable cursor")
+      }
+    }
+  }
+
+  "GET /pools/{id}/posts" should {
+    "return 200 with hydrated members in the same envelope as /posts" in {
+      Get("/pools/pool-a/posts") ~> routes ~> check {
+        status shouldBe StatusCodes.OK
+        val body = responseAs[String]
+        body should include("\"id\":\"m1\"")
+        body should include("\"nextCursor\":\"next-members\"")
+      }
+    }
+
+    "return 400 for a malformed cursor" in {
+      Get("/pools/pool-a/posts?cursor=bad") ~> routes ~> check {
+        status shouldBe StatusCodes.BadRequest
+        responseAs[String] should include("undecodable cursor")
       }
     }
   }

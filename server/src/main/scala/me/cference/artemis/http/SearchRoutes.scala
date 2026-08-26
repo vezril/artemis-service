@@ -28,11 +28,14 @@ final class SearchRoutes(
       Either[SearchError, SearchPage]
     ],
     facetsFn: String => Future[Either[SearchError, Seq[FacetEntry]]],
-    autocompleteTagsFn: (String, Int) => Future[Seq[TagSuggestion]]
+    autocompleteTagsFn: (String, Int) => Future[Seq[TagSuggestion]],
+    listPoolsFn: (Option[String], Int) => Future[Either[String, PoolListResponse]],
+    poolPostsFn: (String, Option[String], Int) => Future[Either[String, SearchResponse]]
 ):
 
   import SearchJson.given
   import CatalogJson.given
+  import PoolReadJson.given
   import org.apache.pekko.http.scaladsl.marshallers.sprayjson.SprayJsonSupport.*
 
   /**
@@ -44,7 +47,7 @@ final class SearchRoutes(
   private val AutocompleteLimit: Int = 20
 
   def routes: Route =
-    concat(facetsRoute, postsRoute, autocompleteRoute)
+    concat(facetsRoute, postsRoute, autocompleteRoute, poolMembersRoute, poolsListRoute)
 
   // GET /posts?tags=<DSL>&order=&cursor=&limit=
   private def postsRoute: Route =
@@ -78,6 +81,29 @@ final class SearchRoutes(
           onSuccess(autocompleteTagsFn(q, AutocompleteLimit)) { suggestions =>
             complete(suggestions.map(SearchJson.suggestionOf).toList)
           }
+    }
+
+  // GET /pools?cursor=&limit= — keyset page of pool cards (name-ordered, visible count + cover).
+  private def poolsListRoute: Route =
+    (path("pools") & get & parameters("cursor".optional, "limit".as[Int].optional)) {
+      (cursor, limit) =>
+        onSuccess(listPoolsFn(cursor, limit.getOrElse(PoolReadService.DefaultPageSize))) {
+          case Right(resp) => complete(resp)
+          case Left(msg) => complete(StatusCodes.BadRequest -> ErrorResponse(msg))
+        }
+    }
+
+  // GET /pools/{id}/posts?cursor=&limit= — hydrated members in pool order. Claimed here (SearchRoutes
+  // composed first) before CatalogRoutes' `GET /pools/{id}` could capture the segment.
+  private def poolMembersRoute: Route =
+    (path("pools" / Segment / "posts") & get & parameters(
+      "cursor".optional,
+      "limit".as[Int].optional
+    )) { (id, cursor, limit) =>
+      onSuccess(poolPostsFn(id, cursor, limit.getOrElse(PoolReadService.DefaultPageSize))) {
+        case Right(resp) => complete(resp)
+        case Left(msg) => complete(StatusCodes.BadRequest -> ErrorResponse(msg))
+      }
     }
 
   private def badRequest(err: SearchError) =
