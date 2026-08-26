@@ -70,7 +70,9 @@ Scala 3 + Pekko, CQRS/event-sourced:
    tasks, `openspec validate --strict`); adversarially review designs before implementing (it has
    caught real bugs every time); archive + sync living specs (`openspec/specs/`) after merge.
 2. **Gates**: scalafmt + scalafix + full `sbt server/test core/test` locally before any PR; CI
-   must be green; merges/releases need Calvin's explicit authorization.
+   must be green; merges/releases need Calvin's explicit authorization. **CI waits go through the
+   `ci-watcher` subagent** (claude-toolkit, Haiku, read-only — spawn via the Agent tool:
+   "watch CI on PR #N in vezril/artemis-service"); don't poll `gh run watch` in frontier context.
 3. **Release train**: PR → development → promotion PR → main → tag `vX.Y.Z` **on main** (the
    release workflow refuses tags off main) → Trivy-gated Docker publish → ping the Codex deploy
    session. **Deploy policy (Calvin, 2026-08-26): routine non-breaking bumps auto-roll on tag;
