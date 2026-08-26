@@ -1,0 +1,831 @@
+openapi: 3.0.3
+info:
+  title: Artemis — catalog API
+  description: |
+    The Danbooru-style media catalog service of the Codex constellation. Event-sourced
+    (Pekko cluster sharding + Postgres journal) with projection-backed reads.
+
+    **Conventions**
+    - No authentication (LAN-only deployment; the network is the auth boundary).
+    - All errors share the envelope `{"error": "<message>"}`.
+    - Post and pool ids are opaque **strings**; names may contain spaces (URL-encode path segments).
+    - List reads paginate by **opaque keyset cursor** (`nextCursor` in the response; pass it back
+      as `?cursor=`; `null`/absent ends the list) — never OFFSET.
+    - The server mints `X-Correlation-Id` itself (request tracing); client-sent ids are ignored.
+    - Writes are acknowledged only once the underlying event is durably journaled.
+    - Served spec/docs: `GET /openapi.yaml`, `GET /docs`.
+  version: 1.3.0
+servers:
+  - url: /
+    description: Direct (in-cluster or port-forward)
+  - url: /api/artemis
+    description: Via the artemis-ui BFF proxy
+tags:
+  - name: health
+  - name: search
+  - name: posts
+  - name: upload
+  - name: review
+  - name: similarity
+  - name: pools
+  - name: saved-searches
+  - name: media
+  - name: admin
+  - name: ops
+
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: Liveness/readiness
+      responses:
+        "200":
+          description: Ready
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+        "503":
+          description: Not ready (same body shape, status DOWN)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+  /metrics:
+    get:
+      tags: [ops]
+      summary: Prometheus text exposition
+      responses:
+        "200":
+          description: Prometheus 0.0.4 text format
+          content:
+            text/plain: { schema: { type: string } }
+
+  /posts:
+    get:
+      tags: [search]
+      summary: Search posts (tag DSL) / browse-all
+      description: |
+        The tag-search DSL over the read model. **`tags` is optional**: absent or blank is
+        browse-all — every non-deleted post, newest first. DSL: space-separated terms; `-term`
+        negates, `~term` joins a flat OR group, `key:value` metatags (`rating:`, `score:>10`,
+        `id:`, `order:score`, ranges `a..b`, wildcards `tag*`). A non-empty query needs at least
+        one positive term (pure negation is rejected 400).
+      parameters:
+        - { name: tags, in: query, required: false, schema: { type: string }, example: "1girl cat_ears -monochrome" }
+        - { name: order, in: query, required: false, schema: { type: string, enum: [id, score, favcount, duration, random] } }
+        - { name: cursor, in: query, required: false, schema: { type: string }, description: Opaque keyset cursor from the previous page }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 40, maximum: 200 } }
+      responses:
+        "200":
+          description: One keyset page
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SearchResponse" }
+        "400": { $ref: "#/components/responses/Error" }
+    post:
+      tags: [posts]
+      summary: Create a pending post (thin metadata create)
+      description: Seeds a pending post from metadata. The real byte-upload path is `POST /uploads`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, md5, filetype]
+              properties:
+                id: { type: string }
+                md5: { type: string }
+                filetype: { type: string, example: png }
+      responses:
+        "201":
+          description: Created pending
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  postId: { type: string }
+                  status: { type: string, example: pending }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /posts/facets:
+    get:
+      tags: [search]
+      summary: Tags-in-results facets for a query
+      description: "`tags` optional: absent/blank aggregates the whole visible catalog."
+      parameters:
+        - { name: tags, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: Tags occurring across the matching posts, grouped by category
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  facets:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        category: { type: integer, description: "0 general · 1 artist · 3 copyright · 4 character · 5 meta" }
+                        tags:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              name: { type: string }
+                              count: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+  /posts/{id}:
+    get:
+      tags: [posts]
+      summary: Read a post (read-your-writes from the entity)
+      parameters: [{ $ref: "#/components/parameters/PostId" }]
+      responses:
+        "200":
+          description: The post
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Post" }
+        "404": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [admin]
+      summary: Soft-delete a post (retention window, then auto-purge)
+      parameters: [{ $ref: "#/components/parameters/PostId" }]
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostStatus" }
+        "404": { $ref: "#/components/responses/Error" }
+  /posts/{id}/tags:
+    patch:
+      tags: [posts]
+      summary: Replace the post's full tag set (canonicalized via aliases)
+      parameters: [{ $ref: "#/components/parameters/PostId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tags]
+              properties:
+                tags: { type: array, items: { type: string } }
+      responses:
+        "200": { description: Applied (no body) }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /posts/{id}/favorite:
+    post:
+      tags: [posts]
+      summary: Favorite
+      parameters: [{ $ref: "#/components/parameters/PostId" }]
+      responses:
+        "200": { description: Applied (no body) }
+        "404": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [posts]
+      summary: Unfavorite
+      parameters: [{ $ref: "#/components/parameters/PostId" }]
+      responses:
+        "200": { description: Applied (no body) }
+        "404": { $ref: "#/components/responses/Error" }
+  /posts/{id}/score:
+    post:
+      tags: [posts]
+      summary: Apply a score DELTA (not an absolute value)
+      parameters: [{ $ref: "#/components/parameters/PostId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [delta]
+              properties:
+                delta: { type: integer, example: 1 }
+      responses:
+        "200": { description: Applied (no body) }
+        "404": { $ref: "#/components/responses/Error" }
+  /posts/{id}/rating:
+    patch:
+      tags: [posts]
+      summary: Set the rating
+      parameters: [{ $ref: "#/components/parameters/PostId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rating]
+              properties:
+                rating: { type: string, enum: [g, s, q, e] }
+      responses:
+        "200": { description: Applied (no body) }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /posts/{id}/restore:
+    post:
+      tags: [admin]
+      summary: Restore a soft-deleted post
+      parameters: [{ $ref: "#/components/parameters/PostId" }]
+      responses:
+        "200":
+          description: Restored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostStatus" }
+        "404": { $ref: "#/components/responses/Error" }
+  /posts/{id}/purge:
+    post:
+      tags: [admin]
+      summary: Immediately purge a soft-deleted post (blobs deleted 1:1, irreversible)
+      parameters: [{ $ref: "#/components/parameters/PostId" }]
+      responses:
+        "200":
+          description: Purge outcome
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  purged: { type: boolean }
+                  blobsDeleted: { type: integer }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /posts/{id}/review:
+    post:
+      tags: [review]
+      summary: Resolve a post's auto-tag review
+      description: |
+        Non-empty `accept` applies exactly those suggested tags; empty/absent `accept` is
+        reject-all. Either way the post leaves the review queue.
+      parameters: [{ $ref: "#/components/parameters/PostId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                accept: { type: array, items: { type: string } }
+      responses:
+        "200": { description: Resolved (no body) }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /posts/{id}/similar:
+    get:
+      tags: [similarity]
+      summary: Near-duplicates of a post (perceptual-hash Hamming distance)
+      parameters:
+        - { $ref: "#/components/parameters/PostId" }
+        - { name: threshold, in: query, required: false, schema: { type: integer, default: 10 }, description: Max Hamming distance }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 20 } }
+      responses:
+        "200":
+          description: Matches, closest first (the target is excluded)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SimilarResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /review:
+    get:
+      tags: [review]
+      summary: The auto-tag review queue
+      parameters:
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 50, maximum: 200 } }
+      responses:
+        "200":
+          description: Posts awaiting review with their pending suggestions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  posts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        postId: { type: string }
+                        suggestions:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              tag: { type: string }
+                              confidence: { type: number, format: double }
+                              source: { type: string, example: wd-tagger }
+
+  /similar:
+    get:
+      tags: [similarity]
+      summary: Near-duplicates of a raw perceptual hash
+      parameters:
+        - { name: phash, in: query, required: true, schema: { type: string } }
+        - { name: threshold, in: query, required: false, schema: { type: integer, default: 10 } }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 20 } }
+      responses:
+        "200":
+          description: Matches, closest first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SimilarResponse" }
+
+  /uploads:
+    post:
+      tags: [upload]
+      summary: Upload media bytes (the real ingest path)
+      description: |
+        Raw body upload (any size). Content-addressed into Apollo, deduplicated on md5
+        (an exact duplicate MERGES into the existing post; a soft-deleted match restores),
+        then a processing job is published for Hephaestus. The post starts `pending` and
+        becomes `active` when derivatives land (typically seconds).
+      parameters:
+        - { name: mediaType, in: query, required: false, schema: { type: string }, description: Override the Content-Type sniff }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "201":
+          description: Accepted (post created or merged)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  postId: { type: string }
+                  status: { type: string, example: pending }
+        "400": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+
+  /reprocess:
+    post:
+      tags: [ops]
+      summary: Enqueue a reprocess over existing media
+      description: |
+        `select` is `stale`, `id:<postId>`, or a search-DSL query (there is no "all" keyword —
+        use a broad DSL query). `kind` scopes what re-runs; jobs go to the lower-priority
+        `media.reprocess` lane.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [select, kind]
+              properties:
+                select: { type: string, example: stale }
+                kind: { type: string, enum: [derivatives, tags, metadata] }
+      responses:
+        "200":
+          description: Jobs enqueued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enqueued: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+
+  /tags/autocomplete:
+    get:
+      tags: [search]
+      summary: Tag / metatag autocomplete
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string } }
+        - { name: context, in: query, required: false, schema: { type: string, enum: [tag, metatag], default: tag } }
+      responses:
+        "200":
+          description: |
+            `context=tag` (default): tag rows (snake_case wire fields). `context=metatag`:
+            a bare array of completion strings.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name: { type: string }
+                    category: { type: integer }
+                    post_count: { type: integer }
+                    alias_of: { type: string, nullable: true }
+  /tags/{name}/related:
+    get:
+      tags: [search]
+      summary: Related tags (co-occurrence, cosine-ranked)
+      parameters:
+        - { name: name, in: path, required: true, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer, maximum: 100 } }
+      responses:
+        "200":
+          description: Related tags, most related first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  related:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        cooccurrence: { type: integer }
+                        cosine: { type: number, format: double }
+
+  /pools:
+    get:
+      tags: [pools]
+      summary: List pools (projection-backed, keyset-paged, name-ordered)
+      parameters:
+        - { name: cursor, in: query, required: false, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 40, maximum: 100 } }
+      responses:
+        "200":
+          description: Pool cards with a hydrated cover (first visible member)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pools:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        postCount: { type: integer, description: Count over VISIBLE (non-deleted) members }
+                        cover:
+                          nullable: true
+                          allOf: [{ $ref: "#/components/schemas/PostSummary" }]
+                  nextCursor: { type: string, nullable: true }
+        "400": { $ref: "#/components/responses/Error" }
+    post:
+      tags: [pools]
+      summary: Create a pool (caller-chosen id)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, name]
+              properties:
+                id: { type: string, example: summer-set }
+                name: { type: string, example: Summer set }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  poolId: { type: string }
+                  status: { type: string, example: active }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /pools/{id}:
+    get:
+      tags: [pools]
+      summary: Read a pool (entity, read-your-writes — the authoritative order)
+      parameters: [{ $ref: "#/components/parameters/PoolId" }]
+      responses:
+        "200":
+          description: Name + ordered member ids
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  name: { type: string }
+                  posts: { type: array, items: { type: string } }
+        "404": { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [pools]
+      summary: Rename a pool
+      parameters: [{ $ref: "#/components/parameters/PoolId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+      responses:
+        "200": { description: Renamed (no body) }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [pools]
+      summary: Delete a pool (membership rows go with it; posts are untouched)
+      parameters: [{ $ref: "#/components/parameters/PoolId" }]
+      responses:
+        "200": { description: Deleted (no body) }
+        "404": { $ref: "#/components/responses/Error" }
+  /pools/{id}/posts:
+    get:
+      tags: [pools]
+      summary: A pool's members, hydrated in pool order (projection-backed)
+      description: Never 404s — an unknown/empty pool is an empty page (existence via `GET /pools/{id}`).
+      parameters:
+        - { $ref: "#/components/parameters/PoolId" }
+        - { name: cursor, in: query, required: false, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 40, maximum: 100 } }
+      responses:
+        "200":
+          description: Same envelope as `GET /posts`
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SearchResponse" }
+        "400": { $ref: "#/components/responses/Error" }
+    post:
+      tags: [pools]
+      summary: Append a member (idempotent)
+      parameters: [{ $ref: "#/components/parameters/PoolId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [postId]
+              properties:
+                postId: { type: string }
+      responses:
+        "200": { description: Appended or already present (no body) }
+        "404": { $ref: "#/components/responses/Error" }
+  /pools/{id}/posts/{postId}:
+    delete:
+      tags: [pools]
+      summary: Remove a member
+      parameters:
+        - { $ref: "#/components/parameters/PoolId" }
+        - { name: postId, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: Removed (no body) }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+  /pools/{id}/order:
+    put:
+      tags: [pools]
+      summary: Reorder — the FULL permutation of the current membership
+      parameters: [{ $ref: "#/components/parameters/PoolId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order]
+              properties:
+                order: { type: array, items: { type: string } }
+      responses:
+        "200": { description: Reordered (no body) }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /saved-searches:
+    get:
+      tags: [saved-searches]
+      summary: List saved searches (entity, read-your-writes)
+      responses:
+        "200":
+          description: The ordered list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  searches:
+                    type: array
+                    items: { $ref: "#/components/schemas/SavedSearch" }
+    post:
+      tags: [saved-searches]
+      summary: Save a search
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SavedSearch" }
+      responses:
+        "201":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SavedSearch" }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+  /saved-searches/{name}:
+    patch:
+      tags: [saved-searches]
+      summary: Rename a saved search (rejects a collision with an existing name)
+      parameters: [{ $ref: "#/components/parameters/SearchName" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, description: The NEW name }
+      responses:
+        "200": { description: Renamed (no body) }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [saved-searches]
+      summary: Remove a saved search
+      parameters: [{ $ref: "#/components/parameters/SearchName" }]
+      responses:
+        "200": { description: Removed (idempotent; no body) }
+        "400": { $ref: "#/components/responses/Error" }
+  /saved-searches/{name}/results:
+    get:
+      tags: [saved-searches]
+      summary: Run a saved search (same envelope as GET /posts)
+      parameters:
+        - { $ref: "#/components/parameters/SearchName" }
+        - { name: order, in: query, required: false, schema: { type: string } }
+        - { name: cursor, in: query, required: false, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer, default: 40 } }
+      responses:
+        "200":
+          description: One keyset page
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SearchResponse" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /admin/gc/orphan-sweep:
+    post:
+      tags: [admin]
+      summary: Sweep failed-upload orphan blobs (dry-run supported)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dryRun: { type: boolean, default: true }
+      responses:
+        "200":
+          description: Sweep outcome
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scanned: { type: integer }
+                  orphans: { type: integer }
+                  deleted: { type: integer }
+  /admin/gc/purge-deleted:
+    post:
+      tags: [admin]
+      summary: Purge soft-deleted posts past retention now
+      responses:
+        "200":
+          description: Purge outcome
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  purged: { type: integer }
+
+  /media/{md5}/{variant}:
+    get:
+      tags: [media]
+      summary: Stream a media derivative (HTTP range supported)
+      description: |
+        Streams the Apollo-stored derivative for `(md5, variant)` — resolved from the post's
+        STORED derivative refs. `variant` is the wire filename from the post's `derivatives`
+        (`thumb.webp`, `sample.webp`, `720p.mp4`). Supports `Range` (`206`) for video seeking.
+      parameters:
+        - { name: md5, in: path, required: true, schema: { type: string } }
+        - { name: variant, in: path, required: true, schema: { type: string, example: thumb.webp } }
+      responses:
+        "200":
+          description: The full object (Accept-Ranges bytes)
+          content:
+            image/webp: { schema: { type: string, format: binary } }
+            video/mp4: { schema: { type: string, format: binary } }
+        "206": { description: Partial content for a Range request }
+        "404": { description: No such object }
+        "416": { description: Range not satisfiable }
+
+components:
+  parameters:
+    PostId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    PoolId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    SearchName:
+      name: name
+      in: path
+      required: true
+      schema: { type: string }
+      description: The saved search's name (URL-encode — names may contain spaces)
+  responses:
+    Error:
+      description: Error envelope
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+    Health:
+      type: object
+      properties:
+        status: { type: string, example: UP }
+        service: { type: string, example: artemis }
+        version: { type: string, example: 1.3.0 }
+    DerivativeRef:
+      type: object
+      properties:
+        kind: { type: string, enum: [thumbnail, sample, transcode, original] }
+        variant: { type: string, example: thumb.webp, description: "Filename for GET /media/{md5}/{variant}" }
+    PostSummary:
+      type: object
+      description: A search-result summary (gallery card fields)
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [pending, active, failed, deleted] }
+        tags: { type: array, items: { type: string } }
+        rating: { type: string, nullable: true, enum: [g, s, q, e] }
+        score: { type: integer }
+        favCount: { type: integer }
+        width: { type: integer, nullable: true }
+        height: { type: integer, nullable: true }
+        duration: { type: integer, nullable: true, description: Milliseconds (videos) }
+        parent: { type: string, nullable: true }
+        duplicateOf: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        md5: { type: string, nullable: true }
+        derivatives:
+          type: array
+          items: { $ref: "#/components/schemas/DerivativeRef" }
+    Post:
+      allOf:
+        - { $ref: "#/components/schemas/PostSummary" }
+        - type: object
+          description: The single-post read adds entity-level fields
+          properties:
+            favorited: { type: boolean }
+            filetype: { type: string, nullable: true }
+            source: { type: string, nullable: true }
+    SearchResponse:
+      type: object
+      properties:
+        posts:
+          type: array
+          items: { $ref: "#/components/schemas/PostSummary" }
+        nextCursor: { type: string, nullable: true, description: Pass back as ?cursor=; null ends the list }
+    SimilarResponse:
+      type: object
+      properties:
+        similar:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              distance: { type: integer, description: Hamming distance (0 = identical hash; ≤10 near-dupe) }
+    PostStatus:
+      type: object
+      properties:
+        id: { type: string }
+        status: { type: string }
+    SavedSearch:
+      type: object
+      required: [name, query]
+      properties:
+        name: { type: string, maxLength: 128 }
+        query: { type: string, description: A tag-DSL query }

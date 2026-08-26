@@ -15,6 +15,7 @@ import me.cference.artemis.http.{
   AdminDeletionRoutes,
   AdminGcRoutes,
   CatalogRoutes,
+  DocsRoutes,
   HealthRoutes,
   HttpServer,
   MediaRoutes,
@@ -259,6 +260,7 @@ object Main:
     val apiRoutes: Route =
       HealthRoutes(BuildInfo.version, () => readiness.get()) ~
         MetricsRoutes(metrics) ~
+        DocsRoutes.fromResources().routes ~
         searchRoutes.routes ~
         catalogRoutes.routes ~
         mediaRoutes.routes ~
