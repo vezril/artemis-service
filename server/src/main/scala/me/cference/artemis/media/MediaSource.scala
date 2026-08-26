@@ -26,16 +26,21 @@ trait MediaSource:
   def fetch(ref: ObjectRef): Future[Option[MediaObject]]
 
 /**
- * Maps a `(md5, variant)` request to the Apollo object it lives under.
+ * FALLBACK mapping from a `(md5, variant)` request to the Apollo object it lives under, used only
+ * when the read model has no stored ref for the pair (e.g. projection lag right after processing).
  *
- * The constellation stores originals AND derivatives content-addressed under the md5, sharded by
- * the first two md5 characters: `<md5[0:2]>/<md5>/<variant>` in the `media` bucket. The `variant`
- * is the stored filename Hephaestus/Apollo wrote (e.g. `thumb.webp`, `sample.webp`, `720p.mp4`,
- * `original.png`). This convention MUST stay in step with how those services key derivatives; it is
- * deliberately a small, single function so adjusting it is a one-line change.
+ * Hephaestus keys derivatives content-addressed under the md5, sharded by the first two md5
+ * characters, under a `derivatives/` prefix: `derivatives/<md5[0:2]>/<md5>/<variant>` in the
+ * `media` bucket (see Hephaestus `DerivativePlan`). The `variant` is the stored filename it wrote
+ * (`thumb.webp`, `sample.webp`, `720p.mp4`).
+ *
+ * The PRIMARY resolution path is the read model's stored refs (`ReadModelRepository
+ * .mediaObjectRef`) — the exact `<bucket>/<object>` Hephaestus reported — precisely because this
+ * convention once drifted (the `derivatives/` prefix was missing here) and every image 404'd. Truth
+ * first, convention only as a fallback.
  */
 object MediaResolver:
   val Bucket: String = "media"
 
   def resolve(md5: String, variant: String): ObjectRef =
-    ObjectRef(bucket = Bucket, `object` = s"${md5.take(2)}/$md5/$variant")
+    ObjectRef(bucket = Bucket, `object` = s"derivatives/${md5.take(2)}/$md5/$variant")

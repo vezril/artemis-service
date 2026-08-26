@@ -37,7 +37,12 @@ final class MediaRoutesSpec extends AnyWordSpec with Matchers with ScalatestRout
       def fetch(ref: ObjectRef): Future[Option[MediaObject]] = Future.successful(result)
 
   private def routesFor(result: Option[MediaObject]): Route =
-    MediaRoutes(sourceReturning(result)).routes
+    // The resolver seam is exercised by resolving via the convention fallback here; the
+    // stored-ref-first production resolver is covered by ReadModelRepository's tests.
+    MediaRoutes(
+      sourceReturning(result),
+      (md5, variant) => Future.successful(MediaResolver.resolve(md5, variant))
+    ).routes
 
   /** A media object whose body is split into several chunks, to exercise cross-chunk slicing. */
   private def chunked(contentType: String, chunks: List[String]): MediaObject =
