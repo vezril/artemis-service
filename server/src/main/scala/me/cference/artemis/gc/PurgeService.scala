@@ -30,6 +30,7 @@ import scala.util.control.NonFatal
  */
 final class PurgeService(
     softDeletedBefore: Instant => Future[Seq[PurgeTarget]],
+    purgeTargetFor: String => Future[Option[PurgeTarget]],
     blobs: BlobStore,
     postFor: String => RecipientRef[PostEntity.Command],
     retention: FiniteDuration
@@ -51,6 +52,33 @@ final class PurgeService(
     }
 
   /**
+   * Immediately purge the single soft-deleted post `id`, bypassing the retention window: purge the
+   * aggregate FIRST (the `Purge` command atomically confirms it is still `Deleted`), then delete
+   * its exact blobs best-effort. A post that is not currently `Deleted` (never existed,
+   * active/restored, or already purged) resolves to no target and is an accepted no-op
+   * (`PurgeOutcome(false, 0)`); a post whose row is present but whose aggregate is no longer
+   * `Deleted` is likewise not purged.
+   *
+   * Known limitation (harmless, single-user scale): the read-model row is removed asynchronously
+   * when the projection consumes `PostPurged`. In the brief window between the aggregate committing
+   * that event and the row being deleted, a second `purgeNow(id)` (e.g. a client retry) still
+   * resolves the same target and — because `Purge` on an already-`Purged` aggregate is an
+   * idempotent accept — reports `PurgeOutcome(true, …)` again and re-issues the (idempotent) blob
+   * deletes. It is never data-unsafe (1:1 content-addressed storage; deletes are idempotent), only
+   * a possibly-double "purged:true". A precise once-only signal would need the entity to report
+   * event-appended vs. no-op, which is out of scope here.
+   */
+  def purgeNow(id: String): Future[PurgeService.PurgeOutcome] =
+    purgeTargetFor(id).flatMap {
+      case None => Future.successful(PurgeService.PurgeOutcome(false, 0))
+      case Some(target) =>
+        purge(target.id).flatMap {
+          case true => deleteBlobs(target.blobKeys).map(PurgeService.PurgeOutcome(true, _))
+          case false => Future.successful(PurgeService.PurgeOutcome(false, 0))
+        }
+    }
+
+  /**
    * Purge the post; `true` iff it was (or already is) purged, `false` if it is no longer Deleted.
    */
   private def purge(id: String): Future[Boolean] =
@@ -64,23 +92,33 @@ final class PurgeService(
         false
       }
 
-  /** Delete the purged post's exact blob keys; best-effort per blob. */
-  private def deleteBlobs(keys: Seq[String]): Future[Unit] =
-    sequentially(keys) { key =>
-      blobs.delete(key).recover { case NonFatal(e) =>
-        log.warn(
-          "purge: failed to delete blob {} ({}); orphan sweep reclaims leftover originals",
-          key,
-          e.getMessage
-        )
-        ()
+  /**
+   * Delete the purged post's exact blob keys; best-effort per blob, returning the success count.
+   */
+  private def deleteBlobs(keys: Seq[String]): Future[Int] =
+    keys.foldLeft(Future.successful(0)) { (acc, key) =>
+      acc.flatMap { n =>
+        blobs
+          .delete(key)
+          .map(_ => n + 1)
+          .recover { case NonFatal(e) =>
+            log.warn(
+              "purge: failed to delete blob {} ({}); orphan sweep reclaims leftover originals",
+              key,
+              e.getMessage
+            )
+            n
+          }
       }
     }
-
-  private def sequentially[A](items: Seq[A])(f: A => Future[Unit]): Future[Unit] =
-    items.foldLeft(Future.successful(()))((acc, item) => acc.flatMap(_ => f(item)))
 
   private def foldCount[A](items: Seq[A])(f: A => Future[Boolean]): Future[Int] =
     items.foldLeft(Future.successful(0)) { (acc, item) =>
       acc.flatMap(n => f(item).map(done => if done then n + 1 else n))
     }
+
+object PurgeService:
+  /**
+   * The outcome of a single-post [[PurgeService.purgeNow]]: whether it purged, and blobs removed.
+   */
+  final case class PurgeOutcome(purged: Boolean, blobsDeleted: Int)

@@ -26,7 +26,8 @@ object PostJson:
           None,
           None,
           None,
-          None
+          None,
+          Nil
         )
 
       case PostState.Pending(pid, md5, filetype) =>
@@ -43,7 +44,8 @@ object PostJson:
           filetype = Some(filetype.value),
           width = None,
           height = None,
-          duration = None
+          duration = None,
+          derivatives = Nil
         )
 
       case PostState.Failed(pid, md5, filetype, _) =>
@@ -61,7 +63,8 @@ object PostJson:
           filetype = Some(filetype.value),
           width = None,
           height = None,
-          duration = None
+          duration = None,
+          derivatives = Nil
         )
 
       case PostState.Active(pid, media, content) =>
@@ -86,7 +89,8 @@ object PostJson:
           None,
           None,
           None,
-          None
+          None,
+          Nil
         )
 
   private def active(
@@ -108,5 +112,6 @@ object PostJson:
       filetype = Some(media.filetype.value),
       width = Some(media.dimensions.width),
       height = Some(media.dimensions.height),
-      duration = media.dimensions.duration
+      duration = media.dimensions.duration,
+      derivatives = DerivativeRef.refsOf(media.derivatives)
     )

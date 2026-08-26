@@ -3,7 +3,7 @@ package me.cference.artemis
 import com.typesafe.config.ConfigFactory
 import me.cference.artemis.build.BuildInfo
 import me.cference.artemis.config.AppConfig
-import me.cference.artemis.gc.{ApolloBlobStore, PurgeService}
+import me.cference.artemis.gc.{ApolloBlobStore, OrphanSweepService, PurgeService}
 import me.cference.artemis.grpc.ApolloObjectClient
 import me.cference.artemis.hermes.{
   HermesClient,
@@ -12,11 +12,14 @@ import me.cference.artemis.hermes.{
   HermesTagJobPublisher
 }
 import me.cference.artemis.http.{
+  AdminDeletionRoutes,
+  AdminGcRoutes,
   CatalogRoutes,
   HealthRoutes,
   HttpServer,
   MediaRoutes,
   MetricsRoutes,
+  PoolReadService,
   RelatedTagsRoutes,
   ReprocessRoutes,
   RequestTracing,
@@ -158,15 +161,25 @@ object Main:
       readModel.findByMd5
     )
 
+    // The shared media blob store (Apollo-backed) for both GC paths: purge (delete a post's exact
+    // keys) and the orphan sweep (list/delete unreferenced originals).
+    val blobStore = new ApolloBlobStore(apolloClient, "media")
+
     // The deletion-lifecycle auto-purge job: soft-deleted posts past retention → delete blobs 1:1
-    // + purge. Driven on a schedule once dependencies are ready.
+    // + purge. Also serves the single-post immediate purge (admin-deletion) via `purgeNow`. Driven
+    // on a schedule once dependencies are ready.
     val purgeService =
       new PurgeService(
         readModel.softDeletedBefore,
-        new ApolloBlobStore(apolloClient, "media"),
+        readModel.purgeTargetFor,
+        blobStore,
         postFor,
         gcCfg.retention
       )
+
+    // The failed-upload orphan sweep (admin-gc): list `originals/`, subtract referenced md5s, and
+    // delete the leftovers. Unscheduled — triggered only on demand via the admin GC surface.
+    val orphanSweepService = new OrphanSweepService(readModel.referencedMd5s, blobStore)
 
     // The read surface: DSL search + facets over the read model, alias-resolving against the cache.
     val searchService = new SearchService(
@@ -178,10 +191,13 @@ object Main:
 
     // Compose the HTTP surface SEARCH-FIRST so `/posts` and `/posts/facets` are claimed before
     // Catalog's `/posts/{id}` segment route could capture them.
+    val poolReadService = new PoolReadService(readModel)(using system.executionContext)
     val searchRoutes = new SearchRoutes(
       searchService.search,
       searchService.facets,
-      readModel.autocompleteTags
+      readModel.autocompleteTags,
+      poolReadService.listPools,
+      poolReadService.poolPosts
     )
     val catalogRoutes = CatalogRoutes(postFor, poolFor)
     val mediaRoutes = MediaRoutes(new ApolloMediaSource(apolloClient))
@@ -223,6 +239,13 @@ object Main:
     )
     val reprocessRoutes = ReprocessRoutes(reprocessService.reprocess)
 
+    // The admin surfaces: per-post deletion lifecycle (soft-delete/restore/immediate purge) and
+    // service-wide GC triggers (orphan sweep + on-demand retention purge). Composed after search so
+    // the `/posts` segment routing stays consistent.
+    val adminDeletionRoutes = AdminDeletionRoutes(postFor, purgeService.purgeNow)
+    val adminGcRoutes =
+      AdminGcRoutes(orphanSweepService.sweep, () => purgeService.purgeDue(java.time.Instant.now()))
+
     val apiRoutes: Route =
       HealthRoutes(BuildInfo.version, () => readiness.get()) ~
         MetricsRoutes(metrics) ~
@@ -234,7 +257,9 @@ object Main:
         relatedTagsRoutes.routes ~
         similarityRoutes.routes ~
         reviewRoutes.routes ~
-        reprocessRoutes.routes
+        reprocessRoutes.routes ~
+        adminDeletionRoutes.routes ~
+        adminGcRoutes.routes
 
     // Wrap the whole surface in request-tracing: mint a correlation id per request (ignoring any
     // client value), MDC it for the request's logs, access-log entry/completion, and echo

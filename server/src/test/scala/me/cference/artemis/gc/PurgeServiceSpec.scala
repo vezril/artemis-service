@@ -123,6 +123,7 @@ final class PurgeServiceSpec
       val service =
         new PurgeService(
           _ => Future.successful(Seq(PurgeTarget("pg-1", keys))),
+          _ => Future.successful(None),
           blobs,
           postFor,
           30.days
@@ -142,6 +143,7 @@ final class PurgeServiceSpec
       val blobs = new FakeBlobStore
       val service = new PurgeService(
         _ => Future.successful(Seq(PurgeTarget("race-1", keys))),
+        _ => Future.successful(None),
         blobs,
         postFor,
         30.days
@@ -154,8 +156,92 @@ final class PurgeServiceSpec
 
     "purge nothing (and delete no blobs) when no post is due" in {
       val blobs = new FakeBlobStore
-      val service = new PurgeService(_ => Future.successful(Seq.empty), blobs, postFor, 30.days)
+      val service =
+        new PurgeService(
+          _ => Future.successful(Seq.empty),
+          _ => Future.successful(None),
+          blobs,
+          postFor,
+          30.days
+        )
       service.purgeDue(Instant.now()).futureValue shouldBe 0
       blobs.deleted shouldBe empty
+    }
+  }
+
+  "PurgeService.purgeNow" should {
+
+    "purge a soft-deleted post: aggregate first, then delete its exact blobs 1:1" in {
+      softDelete("now-1", "cafef00d")
+      getState("now-1") shouldBe a[PostState.Deleted]
+
+      val blobs = new FakeBlobStore
+      val service = new PurgeService(
+        _ => Future.successful(Seq.empty),
+        id => Future.successful(Option.when(id == "now-1")(PurgeTarget("now-1", keys))),
+        blobs,
+        postFor,
+        30.days
+      )
+
+      service.purgeNow("now-1").futureValue shouldBe PurgeService.PurgeOutcome(true, keys.size)
+      blobs.deleted.asScala.toSet shouldBe keys.toSet
+      getState("now-1") shouldBe PostState.Purged(PostId.unsafe("now-1"))
+    }
+
+    "be a no-op (false, 0) when no soft-deleted target resolves" in {
+      val blobs = new FakeBlobStore
+      val service = new PurgeService(
+        _ => Future.successful(Seq.empty),
+        _ => Future.successful(None),
+        blobs,
+        postFor,
+        30.days
+      )
+
+      service.purgeNow("ghost").futureValue shouldBe PurgeService.PurgeOutcome(false, 0)
+      blobs.deleted shouldBe empty
+    }
+
+    "NOT purge (and delete no blobs) when the post is no longer Deleted (restored since)" in {
+      // The target row still resolves, but the aggregate is Active — purge-first rejects it.
+      seedActive("now-active", "d00df00d")
+      getState("now-active") shouldBe a[PostState.Active]
+
+      val blobs = new FakeBlobStore
+      val service = new PurgeService(
+        _ => Future.successful(Seq.empty),
+        _ => Future.successful(Some(PurgeTarget("now-active", keys))),
+        blobs,
+        postFor,
+        30.days
+      )
+
+      service.purgeNow("now-active").futureValue shouldBe PurgeService.PurgeOutcome(false, 0)
+      blobs.deleted shouldBe empty
+      getState("now-active") shouldBe a[PostState.Active]
+    }
+
+    "be idempotent: a second purge of an already-purged post resolves no target (false, 0)" in {
+      softDelete("now-idem", "feedface")
+
+      val blobs = new FakeBlobStore
+      // First purge sees the target; once purged the row is gone, so the target resolves to None.
+      @volatile var purged = false
+      val service = new PurgeService(
+        _ => Future.successful(Seq.empty),
+        id =>
+          Future.successful(
+            if id == "now-idem" && !purged then Some(PurgeTarget("now-idem", keys)) else None
+          ),
+        blobs,
+        postFor,
+        30.days
+      )
+
+      service.purgeNow("now-idem").futureValue shouldBe PurgeService.PurgeOutcome(true, keys.size)
+      purged = true
+      service.purgeNow("now-idem").futureValue shouldBe PurgeService.PurgeOutcome(false, 0)
+      blobs.deleted.asScala.toList shouldBe keys.toList // only the first pass deleted
     }
   }

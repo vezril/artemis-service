@@ -24,7 +24,22 @@ final class SearchServiceSpec extends AnyWordSpec with Matchers with ScalaFuture
     PatienceConfig(timeout = Span(3, Seconds), interval = Span(20, Millis))
 
   private def row(id: String): PostRow =
-    PostRow(id, Seq("1girl"), "active", 0, 0, None, None, None, None, None, None, Instant.EPOCH)
+    PostRow(
+      id,
+      Seq("1girl"),
+      "active",
+      0,
+      0,
+      None,
+      None,
+      None,
+      None,
+      None,
+      None,
+      Instant.EPOCH,
+      None,
+      Seq.empty
+    )
 
   private val page = SearchPage(Seq(row("p1")), None)
 

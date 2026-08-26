@@ -1,6 +1,7 @@
 package me.cference.artemis.http
 
 import com.typesafe.config.ConfigFactory
+import me.cference.artemis.domain.Derivative
 import me.cference.artemis.projection.{FacetEntry, PostRow, TagSuggestion}
 import me.cference.artemis.search.{SearchError, SearchPage}
 import org.apache.pekko.http.scaladsl.model.StatusCodes
@@ -43,7 +44,12 @@ final class SearchRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
       duration = None,
       parentId = None,
       duplicateOf = None,
-      createdAt = Instant.parse("2026-01-01T00:00:00Z")
+      createdAt = Instant.parse("2026-01-01T00:00:00Z"),
+      md5 = Some("d41d8cd98f00b204e9800998ecf8427e"),
+      derivatives = Seq(
+        Derivative("thumbnail", "media/d4/d41d8cd98f00b204e9800998ecf8427e/thumb.webp"),
+        Derivative("sample", "media/d4/d41d8cd98f00b204e9800998ecf8427e/sample.webp")
+      )
     )
 
   private val page = SearchPage(Seq(row("p1"), row("p2")), Some("cursor-xyz"))
@@ -72,8 +78,33 @@ final class SearchRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
         )
       )
 
+  // Fake pool reads: a cursor containing "bad" simulates an undecodable cursor (→ 400).
+  private val listPoolsFn: (Option[String], Int) => Future[Either[String, PoolListResponse]] =
+    (cursor, _) =>
+      if cursor.exists(_.contains("bad")) then Future.successful(Left("undecodable cursor"))
+      else
+        Future.successful(
+          Right(
+            PoolListResponse(
+              List(
+                PoolSummary("pool-a", "Alpha", 2, Some(SearchJson.summaryOf(row("cover-a")))),
+                PoolSummary("pool-b", "Bravo", 0, None)
+              ),
+              Some("next-pools")
+            )
+          )
+        )
+
+  private val poolPostsFn: (String, Option[String], Int) => Future[Either[String, SearchResponse]] =
+    (_, cursor, _) =>
+      if cursor.exists(_.contains("bad")) then Future.successful(Left("undecodable cursor"))
+      else
+        Future.successful(
+          Right(SearchResponse(List(SearchJson.summaryOf(row("m1"))), Some("next-members")))
+        )
+
   private def routes: Route =
-    new SearchRoutes(searchFn, facetsFn, autocompleteTagsFn).routes
+    new SearchRoutes(searchFn, facetsFn, autocompleteTagsFn, listPoolsFn, poolPostsFn).routes
 
   "GET /posts" should {
 
@@ -86,6 +117,20 @@ final class SearchRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
         body should include("\"score\":42")
         body should include("\"rating\":\"s\"")
         body should include("\"nextCursor\":\"cursor-xyz\"")
+      }
+    }
+
+    "expose each summary's md5 and derivative refs (kind + gateway variant filename)" in {
+      Get("/posts?tags=1girl%20cat_ears") ~> routes ~> check {
+        status shouldBe StatusCodes.OK
+        val body = responseAs[String]
+        body should include("\"md5\":\"d41d8cd98f00b204e9800998ecf8427e\"")
+        body should include("\"kind\":\"thumbnail\"")
+        body should include("\"variant\":\"thumb.webp\"")
+        body should include("\"kind\":\"sample\"")
+        body should include("\"variant\":\"sample.webp\"")
+        // The raw Apollo object key / bucket prefix never leaks — only the gateway variant.
+        body should not include "media/d4"
       }
     }
 
@@ -152,10 +197,64 @@ final class SearchRoutesSpec extends AnyWordSpec with Matchers with ScalatestRou
         Either[SearchError, SearchPage]
       ] =
         (_, _, _, _) => Future.successful(Right(SearchPage(Seq(row("p1")), None)))
-      val r = new SearchRoutes(noCursor, facetsFn, autocompleteTagsFn).routes
+      val r =
+        new SearchRoutes(noCursor, facetsFn, autocompleteTagsFn, listPoolsFn, poolPostsFn).routes
       Get("/posts?tags=1girl") ~> r ~> check {
         status shouldBe StatusCodes.OK
         responseAs[String] should not include "nextCursor"
+      }
+    }
+
+    "reach the pool-members handler for /pools/{id}/posts even composed with a /pools/{id} route" in {
+      // CatalogRoutes serves GET /pools/{id} via `path(Segment)` under `pathPrefix("pools")`, which
+      // would capture the members feed if it ran first. Composing search-first must intercept it.
+      import org.apache.pekko.http.scaladsl.server.Directives.*
+      val poolByIdRoute: Route =
+        pathPrefix("pools")(path(Segment)(id => get(complete(s"pool:$id"))))
+      val composed = routes ~ poolByIdRoute
+      Get("/pools/abc/posts") ~> composed ~> check {
+        status shouldBe StatusCodes.OK
+        responseAs[String] should include("\"id\":\"m1\"") // members handler, not "pool:abc"
+      }
+    }
+  }
+
+  "GET /pools" should {
+    "return 200 with pool cards (name, count, cover) and the next cursor" in {
+      Get("/pools") ~> routes ~> check {
+        status shouldBe StatusCodes.OK
+        val body = responseAs[String]
+        body should include("\"id\":\"pool-a\"")
+        body should include("\"name\":\"Alpha\"")
+        body should include("\"postCount\":2")
+        body should include("\"cover\":") // present for pool-a
+        body should include("\"postCount\":0") // pool-b empty
+        body should include("\"nextCursor\":\"next-pools\"")
+      }
+    }
+
+    "return 400 for a malformed cursor" in {
+      Get("/pools?cursor=bad") ~> routes ~> check {
+        status shouldBe StatusCodes.BadRequest
+        responseAs[String] should include("undecodable cursor")
+      }
+    }
+  }
+
+  "GET /pools/{id}/posts" should {
+    "return 200 with hydrated members in the same envelope as /posts" in {
+      Get("/pools/pool-a/posts") ~> routes ~> check {
+        status shouldBe StatusCodes.OK
+        val body = responseAs[String]
+        body should include("\"id\":\"m1\"")
+        body should include("\"nextCursor\":\"next-members\"")
+      }
+    }
+
+    "return 400 for a malformed cursor" in {
+      Get("/pools/pool-a/posts?cursor=bad") ~> routes ~> check {
+        status shouldBe StatusCodes.BadRequest
+        responseAs[String] should include("undecodable cursor")
       }
     }
   }

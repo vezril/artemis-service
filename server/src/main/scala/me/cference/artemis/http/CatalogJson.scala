@@ -34,7 +34,8 @@ final case class PostResponse(
     filetype: Option[String],
     width: Option[Int],
     height: Option[Int],
-    duration: Option[Long]
+    duration: Option[Long],
+    derivatives: List[DerivativeRef]
 )
 
 // --- Pool requests ---
@@ -63,7 +64,7 @@ object CatalogJson:
   given RootJsonFormat[ScoreRequest] = jsonFormat1(ScoreRequest.apply)
   given RootJsonFormat[SetRatingRequest] = jsonFormat1(SetRatingRequest.apply)
   given RootJsonFormat[CreatePostResponse] = jsonFormat2(CreatePostResponse.apply)
-  given RootJsonFormat[PostResponse] = jsonFormat13(PostResponse.apply)
+  given RootJsonFormat[PostResponse] = jsonFormat14(PostResponse.apply)
 
   given RootJsonFormat[CreatePoolRequest] = jsonFormat2(CreatePoolRequest.apply)
   given RootJsonFormat[AddPostRequest] = jsonFormat1(AddPostRequest.apply)
