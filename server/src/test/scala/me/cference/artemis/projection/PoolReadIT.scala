@@ -2,11 +2,11 @@ package me.cference.artemis.projection
 
 import com.dimafeng.testcontainers.{ForAllTestContainer, PostgreSQLContainer}
 import me.cference.artemis.config.PostgresConfig
-import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.time.{Millis, Seconds, Span}
 import org.scalatest.wordspec.AnyWordSpec
+import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
 import org.testcontainers.utility.DockerImageName
 
 import java.sql.DriverManager
