@@ -139,6 +139,24 @@ object ReadModelRepository:
    * search summary; the http layer derives each `variant` from the ref. Total: a malformed/absent
    * element (missing `kind`/`ref`) is skipped rather than throwing over a legacy row.
    */
+  /**
+   * Find the stored `<bucket>/<object>` ref whose gateway variant (last non-empty `/`-segment)
+   * matches `variant`, split into `(bucket, object)`. This is the media gateway's PRIMARY
+   * resolution: the exact key Hephaestus reported, never a reconvened convention. `None` when no
+   * derivative matches or the ref is malformed (fewer than two segments).
+   */
+  def mediaRefFor(derivatives: Seq[Derivative], variant: String): Option[(String, String)] =
+    derivatives.iterator
+      .map(_.ref)
+      .find { ref =>
+        val segments = ref.split('/').filter(_.nonEmpty)
+        segments.length >= 2 && segments.last == variant
+      }
+      .flatMap { ref =>
+        val slash = ref.indexOf('/')
+        Option.when(slash > 0 && slash < ref.length - 1)((ref.take(slash), ref.drop(slash + 1)))
+      }
+
   def parseDerivatives(derivativesJson: String): Seq[Derivative] =
     import spray.json.*
     derivativesJson.parseJson match
@@ -872,6 +890,25 @@ final class ReadModelRepository(cfg: PostgresConfig)(using ec: ExecutionContext)
          |LIMIT $$2""".stripMargin,
       bind
     )(row => (row.get("position", classOf[Integer]).intValue, mapPostRow(row)))
+
+  /**
+   * The stored `(bucket, object)` for a `(md5, variant)` media request, from the post's projected
+   * derivative refs — the exact keys Hephaestus reported via `media.processed`. `None` when no post
+   * carries the md5 (or none of its derivatives matches the variant); the gateway then falls back
+   * to the [[me.cference.artemis.media.MediaResolver]] convention.
+   */
+  def mediaObjectRef(md5: String, variant: String): Future[Option[(String, String)]] =
+    query(
+      """SELECT derivatives::text AS derivatives FROM posts
+        |WHERE md5 = $1 AND derivatives IS NOT NULL
+        |ORDER BY created_at DESC LIMIT 1""".stripMargin,
+      _.bind(0, md5)
+    )(row => Option(row.get("derivatives", classOf[String])))
+      .map(
+        _.headOption.flatten
+          .map(ReadModelRepository.parseDerivatives)
+          .flatMap(ReadModelRepository.mediaRefFor(_, variant))
+      )
 
   // --- r2dbc plumbing --------------------------------------------------------
 

@@ -176,3 +176,34 @@ final class PoolReadIT
       repo.poolPostsHydrated("does-not-exist", after = None, limit = 10).futureValue shouldBe empty
     }
   }
+
+  "mediaObjectRef" should {
+
+    "resolve a (md5, variant) request from the STORED derivative refs" in {
+      // Seed with the REAL Hephaestus key layout (derivatives/<md5[0:2]>/<md5>/<name>) — the
+      // media gateway must serve from these stored keys, not a reconvened convention.
+      repo.upsertPostCreated("mref1", "cafe0123", "png", "active", now).futureValue
+      repo
+        .applyMediaProcessed(
+          "mref1",
+          width = 800,
+          height = 600,
+          duration = None,
+          phash = "0",
+          derivativesJson =
+            """[{"kind":"thumbnail","ref":"media/derivatives/ca/cafe0123/thumb.webp"},
+              |{"kind":"sample","ref":"media/derivatives/ca/cafe0123/sample.webp"}]""".stripMargin,
+          status = "active",
+          specVersion = 1
+        )
+        .futureValue
+
+      repo.mediaObjectRef("cafe0123", "thumb.webp").futureValue shouldBe
+        Some(("media", "derivatives/ca/cafe0123/thumb.webp"))
+      repo.mediaObjectRef("cafe0123", "sample.webp").futureValue shouldBe
+        Some(("media", "derivatives/ca/cafe0123/sample.webp"))
+      // Unknown variant and unknown md5 both fall through to None (→ convention fallback).
+      repo.mediaObjectRef("cafe0123", "original.png").futureValue shouldBe None
+      repo.mediaObjectRef("00000000", "thumb.webp").futureValue shouldBe None
+    }
+  }

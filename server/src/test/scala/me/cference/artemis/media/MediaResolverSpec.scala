@@ -11,13 +11,15 @@ import org.scalatest.wordspec.AnyWordSpec
 final class MediaResolverSpec extends AnyWordSpec with Matchers:
 
   "MediaResolver.resolve" should {
-    "map (md5, variant) to the `media` bucket and a content-addressed key" in {
+    "map (md5, variant) to the `media` bucket and Hephaestus's derivatives/ key layout" in {
       val ref = MediaResolver.resolve("abcdef0123", "thumb.webp")
       ref.bucket shouldBe "media"
-      ref.`object` shouldBe "ab/abcdef0123/thumb.webp"
+      ref.`object` shouldBe "derivatives/ab/abcdef0123/thumb.webp"
     }
 
     "shard by the first two md5 characters for any variant filename" in {
-      MediaResolver.resolve("ff991100", "720p.mp4").`object` shouldBe "ff/ff991100/720p.mp4"
+      MediaResolver
+        .resolve("ff991100", "720p.mp4")
+        .`object` shouldBe "derivatives/ff/ff991100/720p.mp4"
     }
   }

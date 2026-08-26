@@ -1,6 +1,6 @@
 package me.cference.artemis.http
 
-import me.cference.artemis.media.{MediaObject, MediaResolver, MediaSource}
+import me.cference.artemis.media.{MediaObject, MediaSource}
 import org.apache.pekko.http.scaladsl.model.headers.{
   ByteRange,
   Range,
@@ -22,21 +22,28 @@ import org.apache.pekko.http.scaladsl.server.Route
 import org.apache.pekko.stream.scaladsl.{Sink, Source}
 import org.apache.pekko.util.ByteString
 
+import scala.concurrent.ExecutionContext
+
 /**
  * The HTTP media gateway (OpenSpec catalog-api "HTTP media gateway over Apollo"). Streams an Apollo
  * derivative — thumb/sample/original/transcode — to the browser so browsers never speak gRPC, with
  * HTTP range support (`206`) for video seeking.
  *
- * Depends only on the [[MediaSource]] port, so it unit-tests against a fake with no real Apollo.
- * The DSL list/facets/autocomplete reads (`GET /posts`) are a later (search-DSL) milestone and are
- * intentionally NOT served here — this surface is media streaming only.
+ * The `(md5, variant)` → object mapping is INJECTED (`resolveRef`): production resolves from the
+ * read model's STORED derivative refs first (the exact keys Hephaestus reported) with the
+ * [[me.cference.artemis.media.MediaResolver]] convention as a fallback — the convention alone once
+ * drifted from Hephaestus's key layout and every image 404'd. Depends only on the [[MediaSource]]
+ * port + the resolver fn, so it unit-tests against fakes with no real Apollo or DB.
  */
-final class MediaRoutes(source: MediaSource):
+final class MediaRoutes(
+    source: MediaSource,
+    resolveRef: (String, String) => scala.concurrent.Future[codex.messages.v1.ObjectRef]
+):
 
   def routes: Route =
     path("media" / Segment / Segment) { (md5, variant) =>
       get {
-        onSuccess(source.fetch(MediaResolver.resolve(md5, variant))) {
+        onSuccess(resolveRef(md5, variant).flatMap(source.fetch)(ExecutionContext.parasitic)) {
           case None => complete(StatusCodes.NotFound)
           case Some(media) => serve(media)
         }
@@ -145,7 +152,10 @@ final class MediaRoutes(source: MediaSource):
     ContentType.parse(raw).getOrElse(ContentTypes.`application/octet-stream`)
 
 object MediaRoutes:
-  def apply(source: MediaSource): MediaRoutes = new MediaRoutes(source)
+  def apply(
+      source: MediaSource,
+      resolveRef: (String, String) => scala.concurrent.Future[codex.messages.v1.ObjectRef]
+  ): MediaRoutes = new MediaRoutes(source, resolveRef)
 
   /**
    * A pekko-stream stage that yields the `[start, start + length)` byte window of a chunked stream,
