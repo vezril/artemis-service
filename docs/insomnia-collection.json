@@ -1,0 +1,829 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_source": "artemis-service:docs",
+  "resources": [
+    {
+      "_id": "wrk_artemis",
+      "_type": "workspace",
+      "name": "Artemis API",
+      "description": "The Codex constellation's media catalog. Set base_url in the environment (direct service or the artemis-ui BFF)."
+    },
+    {
+      "_id": "env_artemis",
+      "_type": "environment",
+      "parentId": "wrk_artemis",
+      "name": "Base Environment",
+      "data": {
+        "base_url": "http://artemis.artemis.svc.cluster.local:8080"
+      },
+      "description": "Direct: http://artemis.artemis.svc.cluster.local:8080 \u00b7 via BFF: https://<artemis-ui-host>/api/artemis"
+    },
+    {
+      "_id": "env_vars",
+      "_type": "environment",
+      "parentId": "env_artemis",
+      "name": "Homelab (via BFF)",
+      "data": {
+        "base_url": "https://artemis.tailscale/api/artemis",
+        "post_id": "<post-id>",
+        "pool_id": "<pool-id>",
+        "md5": "<md5>"
+      }
+    },
+    {
+      "_id": "fld_health",
+      "_type": "request_group",
+      "parentId": "wrk_artemis",
+      "name": "Health & Ops",
+      "description": ""
+    },
+    {
+      "_id": "req_health",
+      "_type": "request",
+      "parentId": "fld_health",
+      "name": "Health",
+      "method": "GET",
+      "url": "{{ _.base_url }}/health",
+      "description": "",
+      "headers": [],
+      "parameters": [],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "req_metrics",
+      "_type": "request",
+      "parentId": "fld_health",
+      "name": "Metrics (Prometheus)",
+      "method": "GET",
+      "url": "{{ _.base_url }}/metrics",
+      "description": "",
+      "headers": [],
+      "parameters": [],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "req_reprocess",
+      "_type": "request",
+      "parentId": "fld_health",
+      "name": "Reprocess",
+      "method": "POST",
+      "url": "{{ _.base_url }}/reprocess",
+      "description": "select: stale | id:<postId> | a search-DSL query. kind: derivatives | tags | metadata.",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "parameters": [],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"select\": \"stale\",\n  \"kind\": \"derivatives\"\n}"
+      }
+    },
+    {
+      "_id": "fld_docs",
+      "_type": "request_group",
+      "parentId": "wrk_artemis",
+      "name": "Docs",
+      "description": ""
+    },
+    {
+      "_id": "req_openapi",
+      "_type": "request",
+      "parentId": "fld_docs",
+      "name": "OpenAPI spec",
+      "method": "GET",
+      "url": "{{ _.base_url }}/openapi.yaml",
+      "description": "",
+      "headers": [],
+      "parameters": [],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "req_docs",
+      "_type": "request",
+      "parentId": "fld_docs",
+      "name": "Swagger UI",
+      "method": "GET",
+      "url": "{{ _.base_url }}/docs",
+      "description": "",
+      "headers": [],
+      "parameters": [],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "fld_search",
+      "_type": "request_group",
+      "parentId": "wrk_artemis",
+      "name": "Search",
+      "description": ""
+    },
+    {
+      "_id": "req_browse",
+      "_type": "request",
+      "parentId": "fld_search",
+      "name": "Browse all (newest first)",
+      "method": "GET",
+      "url": "{{ _.base_url }}/posts",
+      "description": "No tags = the whole visible catalog, newest first.",
+      "headers": [],
+      "parameters": [],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "req_search",
+      "_type": "request",
+      "parentId": "fld_search",
+      "name": "Search (DSL)",
+      "method": "GET",
+      "url": "{{ _.base_url }}/posts",
+      "description": "",
+      "headers": [],
+      "parameters": [
+        {
+          "name": "tags",
+          "value": "1girl cat_ears -monochrome"
+        },
+        {
+          "name": "order",
+          "value": "score",
+          "disabled": true
+        },
+        {
+          "name": "cursor",
+          "value": "",
+          "disabled": true
+        },
+        {
+          "name": "limit",
+          "value": "40",
+          "disabled": true
+        }
+      ],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "req_facets",
+      "_type": "request",
+      "parentId": "fld_search",
+      "name": "Facets",
+      "method": "GET",
+      "url": "{{ _.base_url }}/posts/facets",
+      "description": "",
+      "headers": [],
+      "parameters": [
+        {
+          "name": "tags",
+          "value": "1girl",
+          "disabled": true
+        }
+      ],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "req_autocomplete",
+      "_type": "request",
+      "parentId": "fld_search",
+      "name": "Autocomplete",
+      "method": "GET",
+      "url": "{{ _.base_url }}/tags/autocomplete",
+      "description": "",
+      "headers": [],
+      "parameters": [
+        {
+          "name": "q",
+          "value": "cat"
+        },
+        {
+          "name": "context",
+          "value": "tag",
+          "disabled": true
+        }
+      ],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "req_related",
+      "_type": "request",
+      "parentId": "fld_search",
+      "name": "Related tags",
+      "method": "GET",
+      "url": "{{ _.base_url }}/tags/1girl/related",
+      "description": "",
+      "headers": [],
+      "parameters": [
+        {
+          "name": "limit",
+          "value": "20",
+          "disabled": true
+        }
+      ],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "fld_posts",
+      "_type": "request_group",
+      "parentId": "wrk_artemis",
+      "name": "Posts",
+      "description": ""
+    },
+    {
+      "_id": "req_getpost",
+      "_type": "request",
+      "parentId": "fld_posts",
+      "name": "Get post",
+      "method": "GET",
+      "url": "{{ _.base_url }}/posts/{{ _.post_id }}",
+      "description": "",
+      "headers": [],
+      "parameters": [],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "req_tags",
+      "_type": "request",
+      "parentId": "fld_posts",
+      "name": "Set tags (full replace)",
+      "method": "PATCH",
+      "url": "{{ _.base_url }}/posts/{{ _.post_id }}/tags",
+      "description": "",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "parameters": [],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"tags\": [\n    \"1girl\",\n    \"cat_ears\"\n  ]\n}"
+      }
+    },
+    {
+      "_id": "req_fav",
+      "_type": "request",
+      "parentId": "fld_posts",
+      "name": "Favorite",
+      "method": "POST",
+      "url": "{{ _.base_url }}/posts/{{ _.post_id }}/favorite",
+      "description": "",
+      "headers": [],
+      "parameters": [],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "req_unfav",
+      "_type": "request",
+      "parentId": "fld_posts",
+      "name": "Unfavorite",
+      "method": "DELETE",
+      "url": "{{ _.base_url }}/posts/{{ _.post_id }}/favorite",
+      "description": "",
+      "headers": [],
+      "parameters": [],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "req_score",
+      "_type": "request",
+      "parentId": "fld_posts",
+      "name": "Score (delta)",
+      "method": "POST",
+      "url": "{{ _.base_url }}/posts/{{ _.post_id }}/score",
+      "description": "",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "parameters": [],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"delta\": 1\n}"
+      }
+    },
+    {
+      "_id": "req_rating",
+      "_type": "request",
+      "parentId": "fld_posts",
+      "name": "Set rating",
+      "method": "PATCH",
+      "url": "{{ _.base_url }}/posts/{{ _.post_id }}/rating",
+      "description": "",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "parameters": [],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"rating\": \"s\"\n}"
+      }
+    },
+    {
+      "_id": "fld_upload",
+      "_type": "request_group",
+      "parentId": "wrk_artemis",
+      "name": "Upload",
+      "description": ""
+    },
+    {
+      "_id": "req_upload",
+      "_type": "request",
+      "parentId": "fld_upload",
+      "name": "Upload media (raw body)",
+      "method": "POST",
+      "url": "{{ _.base_url }}/uploads",
+      "description": "Pick a file as the raw binary body. Optional ?mediaType= overrides the sniff. Dedup on md5: an exact duplicate merges into the existing post.",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/octet-stream"
+        }
+      ],
+      "parameters": [],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/octet-stream",
+        "fileName": ""
+      }
+    },
+    {
+      "_id": "fld_review",
+      "_type": "request_group",
+      "parentId": "wrk_artemis",
+      "name": "Review",
+      "description": ""
+    },
+    {
+      "_id": "req_queue",
+      "_type": "request",
+      "parentId": "fld_review",
+      "name": "Review queue",
+      "method": "GET",
+      "url": "{{ _.base_url }}/review",
+      "description": "",
+      "headers": [],
+      "parameters": [
+        {
+          "name": "limit",
+          "value": "50",
+          "disabled": true
+        }
+      ],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "req_resolve",
+      "_type": "request",
+      "parentId": "fld_review",
+      "name": "Resolve review (accept subset; [] = reject all)",
+      "method": "POST",
+      "url": "{{ _.base_url }}/posts/{{ _.post_id }}/review",
+      "description": "",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "parameters": [],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"accept\": [\n    \"1girl\"\n  ]\n}"
+      }
+    },
+    {
+      "_id": "fld_similar",
+      "_type": "request_group",
+      "parentId": "wrk_artemis",
+      "name": "Similarity",
+      "description": ""
+    },
+    {
+      "_id": "req_simpost",
+      "_type": "request",
+      "parentId": "fld_similar",
+      "name": "Similar to post",
+      "method": "GET",
+      "url": "{{ _.base_url }}/posts/{{ _.post_id }}/similar",
+      "description": "",
+      "headers": [],
+      "parameters": [
+        {
+          "name": "threshold",
+          "value": "10",
+          "disabled": true
+        },
+        {
+          "name": "limit",
+          "value": "20",
+          "disabled": true
+        }
+      ],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "req_simhash",
+      "_type": "request",
+      "parentId": "fld_similar",
+      "name": "Similar to phash",
+      "method": "GET",
+      "url": "{{ _.base_url }}/similar",
+      "description": "",
+      "headers": [],
+      "parameters": [
+        {
+          "name": "phash",
+          "value": "0000000000000000"
+        },
+        {
+          "name": "threshold",
+          "value": "10",
+          "disabled": true
+        }
+      ],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "fld_pools",
+      "_type": "request_group",
+      "parentId": "wrk_artemis",
+      "name": "Pools",
+      "description": ""
+    },
+    {
+      "_id": "req_pools",
+      "_type": "request",
+      "parentId": "fld_pools",
+      "name": "List pools",
+      "method": "GET",
+      "url": "{{ _.base_url }}/pools",
+      "description": "",
+      "headers": [],
+      "parameters": [
+        {
+          "name": "cursor",
+          "value": "",
+          "disabled": true
+        },
+        {
+          "name": "limit",
+          "value": "40",
+          "disabled": true
+        }
+      ],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "req_mkpool",
+      "_type": "request",
+      "parentId": "fld_pools",
+      "name": "Create pool",
+      "method": "POST",
+      "url": "{{ _.base_url }}/pools",
+      "description": "",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "parameters": [],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"id\": \"summer-set\",\n  \"name\": \"Summer set\"\n}"
+      }
+    },
+    {
+      "_id": "req_getpool",
+      "_type": "request",
+      "parentId": "fld_pools",
+      "name": "Get pool (ordered ids)",
+      "method": "GET",
+      "url": "{{ _.base_url }}/pools/{{ _.pool_id }}",
+      "description": "",
+      "headers": [],
+      "parameters": [],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "req_poolposts",
+      "_type": "request",
+      "parentId": "fld_pools",
+      "name": "Pool members (hydrated)",
+      "method": "GET",
+      "url": "{{ _.base_url }}/pools/{{ _.pool_id }}/posts",
+      "description": "",
+      "headers": [],
+      "parameters": [],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "req_pooladd",
+      "_type": "request",
+      "parentId": "fld_pools",
+      "name": "Add member",
+      "method": "POST",
+      "url": "{{ _.base_url }}/pools/{{ _.pool_id }}/posts",
+      "description": "",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "parameters": [],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"postId\": \"<post-id>\"\n}"
+      }
+    },
+    {
+      "_id": "req_poolrm",
+      "_type": "request",
+      "parentId": "fld_pools",
+      "name": "Remove member",
+      "method": "DELETE",
+      "url": "{{ _.base_url }}/pools/{{ _.pool_id }}/posts/{{ _.post_id }}",
+      "description": "",
+      "headers": [],
+      "parameters": [],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "req_poolorder",
+      "_type": "request",
+      "parentId": "fld_pools",
+      "name": "Reorder (FULL permutation)",
+      "method": "PUT",
+      "url": "{{ _.base_url }}/pools/{{ _.pool_id }}/order",
+      "description": "",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "parameters": [],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"order\": [\n    \"<post-id-1>\",\n    \"<post-id-2>\"\n  ]\n}"
+      }
+    },
+    {
+      "_id": "req_poolrename",
+      "_type": "request",
+      "parentId": "fld_pools",
+      "name": "Rename pool",
+      "method": "PATCH",
+      "url": "{{ _.base_url }}/pools/{{ _.pool_id }}",
+      "description": "",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "parameters": [],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"name\": \"New name\"\n}"
+      }
+    },
+    {
+      "_id": "req_pooldel",
+      "_type": "request",
+      "parentId": "fld_pools",
+      "name": "Delete pool",
+      "method": "DELETE",
+      "url": "{{ _.base_url }}/pools/{{ _.pool_id }}",
+      "description": "",
+      "headers": [],
+      "parameters": [],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "fld_saved",
+      "_type": "request_group",
+      "parentId": "wrk_artemis",
+      "name": "Saved searches",
+      "description": ""
+    },
+    {
+      "_id": "req_sslist",
+      "_type": "request",
+      "parentId": "fld_saved",
+      "name": "List",
+      "method": "GET",
+      "url": "{{ _.base_url }}/saved-searches",
+      "description": "",
+      "headers": [],
+      "parameters": [],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "req_sssave",
+      "_type": "request",
+      "parentId": "fld_saved",
+      "name": "Save",
+      "method": "POST",
+      "url": "{{ _.base_url }}/saved-searches",
+      "description": "",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "parameters": [],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"name\": \"Cat girls\",\n  \"query\": \"1girl cat_ears\"\n}"
+      }
+    },
+    {
+      "_id": "req_ssrun",
+      "_type": "request",
+      "parentId": "fld_saved",
+      "name": "Run",
+      "method": "GET",
+      "url": "{{ _.base_url }}/saved-searches/Cat%20girls/results",
+      "description": "",
+      "headers": [],
+      "parameters": [],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "req_ssrename",
+      "_type": "request",
+      "parentId": "fld_saved",
+      "name": "Rename",
+      "method": "PATCH",
+      "url": "{{ _.base_url }}/saved-searches/Cat%20girls",
+      "description": "",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "parameters": [],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"name\": \"Felines\"\n}"
+      }
+    },
+    {
+      "_id": "req_ssdel",
+      "_type": "request",
+      "parentId": "fld_saved",
+      "name": "Delete",
+      "method": "DELETE",
+      "url": "{{ _.base_url }}/saved-searches/Cat%20girls",
+      "description": "",
+      "headers": [],
+      "parameters": [],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "fld_admin",
+      "_type": "request_group",
+      "parentId": "wrk_artemis",
+      "name": "Admin (deletion & GC)",
+      "description": ""
+    },
+    {
+      "_id": "req_del",
+      "_type": "request",
+      "parentId": "fld_admin",
+      "name": "Soft-delete post",
+      "method": "DELETE",
+      "url": "{{ _.base_url }}/posts/{{ _.post_id }}",
+      "description": "",
+      "headers": [],
+      "parameters": [],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "req_restore",
+      "_type": "request",
+      "parentId": "fld_admin",
+      "name": "Restore post",
+      "method": "POST",
+      "url": "{{ _.base_url }}/posts/{{ _.post_id }}/restore",
+      "description": "",
+      "headers": [],
+      "parameters": [],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "req_purge",
+      "_type": "request",
+      "parentId": "fld_admin",
+      "name": "Purge post (irreversible)",
+      "method": "POST",
+      "url": "{{ _.base_url }}/posts/{{ _.post_id }}/purge",
+      "description": "",
+      "headers": [],
+      "parameters": [],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "req_sweep",
+      "_type": "request",
+      "parentId": "fld_admin",
+      "name": "Orphan sweep (dry-run)",
+      "method": "POST",
+      "url": "{{ _.base_url }}/admin/gc/orphan-sweep",
+      "description": "",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "parameters": [],
+      "authentication": {},
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"dryRun\": true\n}"
+      }
+    },
+    {
+      "_id": "req_purgedue",
+      "_type": "request",
+      "parentId": "fld_admin",
+      "name": "Purge deleted past retention",
+      "method": "POST",
+      "url": "{{ _.base_url }}/admin/gc/purge-deleted",
+      "description": "",
+      "headers": [],
+      "parameters": [],
+      "authentication": {},
+      "body": {}
+    },
+    {
+      "_id": "fld_media",
+      "_type": "request_group",
+      "parentId": "wrk_artemis",
+      "name": "Media",
+      "description": ""
+    },
+    {
+      "_id": "req_media",
+      "_type": "request",
+      "parentId": "fld_media",
+      "name": "Stream derivative",
+      "method": "GET",
+      "url": "{{ _.base_url }}/media/{{ _.md5 }}/thumb.webp",
+      "description": "variant = the filename from the post's derivatives (thumb.webp / sample.webp / 720p.mp4). Supports Range.",
+      "headers": [],
+      "parameters": [],
+      "authentication": {},
+      "body": {}
+    }
+  ]
+}
