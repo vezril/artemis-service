@@ -1,5 +1,5 @@
 // Version derived from git tags — no version literal in source.
-addSbtPlugin("com.github.sbt" % "sbt-dynver" % "5.1.0")
+addSbtPlugin("com.github.sbt" % "sbt-dynver" % "5.1.1")
 
 // Docker image build (service-image spec: non-root, EXPOSE, HEALTHCHECK).
 addSbtPlugin("com.github.sbt" % "sbt-native-packager" % "1.11.1")
