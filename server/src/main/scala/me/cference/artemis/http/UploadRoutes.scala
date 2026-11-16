@@ -17,9 +17,10 @@ import scala.util.{Failure, Success}
  * downstream (consume loop → projection → search) already runs; this is the missing HTTP seam.
  *
  * The request `Content-Type` carries the media MIME type; the media class (`image`/`video`/…) is
- * derived from it and overridable with `?mediaType=`. The body has no size limit (media files are
- * large; the md5-buffering tradeoff is accepted upstream in `UploadService`). An `UploadService`
- * failure means a downstream dependency (Apollo/Hermes) failed → `502`, not a `500`.
+ * derived from it and overridable with `?mediaType=`. The body has no size limit: media files are
+ * large and `UploadService` spools them to disk rather than holding them in memory, so the limit
+ * that matters is spool-directory space, not heap. An `UploadService` failure means a downstream
+ * dependency (Apollo/Hermes) failed → `502`, not a `500`.
  *
  * `upload` is injected (production: `UploadService.upload`) so the route tests against a fake with
  * no Apollo/Hermes, like the sibling routes.

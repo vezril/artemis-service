@@ -60,6 +60,15 @@ Scala 3 + Pekko, CQRS/event-sourced:
   `removePoolPost` renumbers positions densely — keep that invariant.
 - Score is a **delta**; tags PATCH is a **full-set replace**; review accept `[]` = reject-all;
   upload dedups on md5 (duplicate = merge, soft-deleted match = restore).
+- **Uploads are spooled to disk, never buffered in memory.** Both the content-addressed key and
+  Apollo's `expected_md5` need the hash of the whole body before the put can begin, and an HTTP
+  entity reads once — so `UploadService` writes the body to a temp file while hashing
+  incrementally, then streams that file to Apollo, deleting it on every exit path. Heap stays flat
+  at one chunk; the sizing constraint is **spool-directory space** (`artemis.ingest.spool-dir` /
+  `ARTEMIS_UPLOAD_SPOOL_DIR`, default the JVM temp dir — a container wants a volume big enough for
+  the largest object a producer sends, and Echo sends gigabyte videos). Do not "simplify" this
+  back into a `runFold` into one `ByteString`, and never digest with `wireTap` (best-effort: it
+  can drop elements and silently produce the wrong md5).
 - Reprocess `select` is `stale` | `id:<x>` | DSL query — there is **no "all" keyword**.
 - The pure-negation guardrail applies to non-empty queries only; blank = browse-all.
 - HermesMQ identity appears as broker **count gauges + log MDC**, not name-labeled metrics.

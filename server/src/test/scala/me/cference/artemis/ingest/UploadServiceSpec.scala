@@ -20,6 +20,7 @@ import org.scalatest.matchers.should.Matchers
 import org.scalatest.time.{Millis, Seconds, Span}
 import org.scalatest.wordspec.AnyWordSpecLike
 
+import java.nio.file.{Files, Path}
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicReference
 import scala.concurrent.Future
@@ -68,16 +69,20 @@ final class UploadServiceSpec
     postFor(id) ! PostEntity.Get(probe.ref)
     probe.receiveMessage()
 
-  /** Captures the last put + streamed bytes; succeeds. */
+  /** Captures the last put + streamed bytes; succeeds. `chunkCount` proves it arrived streamed. */
   final private class RecordingUploader extends ObjectUploader:
     val lastHeader = new AtomicReference[Option[PutHeader]](None)
     val lastBytes = new AtomicReference[ByteString](ByteString.empty)
+    val chunkCount = new AtomicReference[Int](0)
     def put(header: PutHeader, chunks: Source[ByteString, ?]): Future[PutObjectResponse] =
       chunks
-        .runFold(ByteString.empty)(_ ++ _)(Materializer(testKit.system))
-        .map { bytes =>
+        .runFold((ByteString.empty, 0)) { case ((acc, count), chunk) =>
+          (acc ++ chunk, count + 1)
+        }(Materializer(testKit.system))
+        .map { case (bytes, count) =>
           lastHeader.set(Some(header))
           lastBytes.set(bytes)
+          chunkCount.set(count)
           PutObjectResponse(
             generation = 1L,
             crc32C = "",
@@ -97,6 +102,12 @@ final class UploadServiceSpec
     def publish(job: ProcessMediaJob): Future[Unit] =
       published.updateAndGet(_ :+ job)
       Future.successful(())
+
+  /** True when no `.part` was left behind — the leak this fix must not reintroduce. */
+  private def spoolIsEmpty(directory: Path): Boolean =
+    val stream = Files.list(directory)
+    try stream.count() == 0L
+    finally stream.close()
 
   private def md5Hex(bytes: ByteString): String =
     MessageDigest
@@ -144,6 +155,127 @@ final class UploadServiceSpec
       jobs.head.source.map(_.bucket) shouldBe Some("media")
       jobs.head.source.map(_.`object`) shouldBe Some(expectedKey)
       jobs.head.want should contain allOf ("thumb", "sample")
+    }
+
+    "spool the body to disk instead of buffering it, and still compute the right md5" in {
+      // The spec requires streaming "while computing the md5". The regression this guards is a
+      // body folded into one ByteString first: survivable for an image, fatal for a 2 GiB video.
+      val spool = Files.createTempDirectory("artemis-spool-stream")
+      val uploader = new RecordingUploader
+      val service =
+        new UploadService(
+          uploader,
+          new RecordingPublisher,
+          postFor,
+          genId = () => "up-streamed",
+          spoolDirectory = spool
+        )
+
+      // Many chunks, deliberately bigger than FileIO's read chunk size so the put is re-chunked.
+      val chunk = ByteString("x" * 4096)
+      val whole = (1 to 64).foldLeft(ByteString.empty)((acc, _) => acc ++ chunk)
+
+      service
+        .upload(Source(List.fill(64)(chunk)), contentType = "video/mp4", mediaType = "video")
+        .futureValue
+
+      // The md5 over the whole body is right even though it was never fully in memory here...
+      uploader.lastHeader.get().map(_.expectedMd5) shouldBe Some(md5Hex(whole))
+      // ...the bytes Apollo received are byte-identical...
+      uploader.lastBytes.get() shouldBe whole
+      // ...and they arrived as a stream of many chunks, not one buffered ByteString.
+      uploader.chunkCount.get() should be > 1
+
+      spoolIsEmpty(spool) shouldBe true
+    }
+
+    "key a video upload content-addressed with the right extension" in {
+      val uploader = new RecordingUploader
+      val service =
+        new UploadService(uploader, new RecordingPublisher, postFor, genId = () => "up-video")
+
+      val bytes = ByteString("fake mp4 bytes")
+      service.upload(Source.single(bytes), "video/mp4", "video").futureValue
+
+      val md5 = md5Hex(bytes)
+      uploader.lastHeader.get().map(_.`object`) shouldBe
+        Some(s"originals/${md5.take(2)}/$md5.mp4")
+    }
+
+    "delete the spooled file after a successful upload" in {
+      val spool = Files.createTempDirectory("artemis-spool-success")
+      val service =
+        new UploadService(
+          new RecordingUploader,
+          new RecordingPublisher,
+          postFor,
+          genId = () => "up-cleanup-ok",
+          spoolDirectory = spool
+        )
+
+      service.upload(Source.single(ByteString("bytes")), "image/png", "image").futureValue
+
+      spoolIsEmpty(spool) shouldBe true
+    }
+
+    "delete the spooled file when the put fails" in {
+      // Otherwise a rejected multi-gigabyte upload leaks a .part until someone notices the disk.
+      val spool = Files.createTempDirectory("artemis-spool-failure")
+      val service =
+        new UploadService(
+          new RejectingUploader,
+          new RecordingPublisher,
+          postFor,
+          genId = () => "up-cleanup-fail",
+          spoolDirectory = spool
+        )
+
+      service.upload(Source.single(ByteString("bad")), "image/png", "image").failed.futureValue
+
+      spoolIsEmpty(spool) shouldBe true
+    }
+
+    "delete the spooled file when the body itself fails mid-stream" in {
+      val spool = Files.createTempDirectory("artemis-spool-abort")
+      val uploader = new RecordingUploader
+      val publisher = new RecordingPublisher
+      val service =
+        new UploadService(
+          uploader,
+          publisher,
+          postFor,
+          genId = () => "up-cleanup-abort",
+          spoolDirectory = spool
+        )
+
+      val broken =
+        Source(List(ByteString("half"))).concat(Source.failed(new RuntimeException("client gone")))
+
+      service.upload(broken, "image/png", "image").failed.futureValue
+
+      spoolIsEmpty(spool) shouldBe true
+      // A truncated body is never put, so no post and no job come of it.
+      uploader.lastHeader.get() shouldBe None
+      getState("up-cleanup-abort") shouldBe PostState.Empty
+      publisher.published.get() shouldBe empty
+    }
+
+    "create the spool directory when it does not exist yet" in {
+      val spool = Files.createTempDirectory("artemis-spool-parent").resolve("nested/uploads")
+      val uploader = new RecordingUploader
+      val service =
+        new UploadService(
+          uploader,
+          new RecordingPublisher,
+          postFor,
+          genId = () => "up-spool-mkdir",
+          spoolDirectory = spool
+        )
+
+      service.upload(Source.single(ByteString("bytes")), "image/png", "image").futureValue
+
+      Files.isDirectory(spool) shouldBe true
+      uploader.lastBytes.get() shouldBe ByteString("bytes")
     }
 
     "abort on a checksum mismatch: no post created and no job published" in {

@@ -2,6 +2,7 @@ package me.cference.artemis.config
 
 import com.typesafe.config.Config
 
+import java.nio.file.{Path, Paths}
 import scala.concurrent.duration.*
 
 /**
@@ -80,6 +81,14 @@ final case class ReprocessConfig(
 )
 
 /**
+ * Upload-spine knobs (ingest-and-processing spec). `spoolDirectory` is where an in-flight upload's
+ * bytes are written while the md5 is computed — the body is never buffered in memory, so this
+ * directory needs room for the largest object a producer will send (video: gigabytes). Blank uses
+ * the JVM temp dir. Read from `artemis.ingest`, env-overridable.
+ */
+final case class IngestConfig(spoolDirectory: Path)
+
+/**
  * Bind coordinates for the HTTP API surface (health, metrics, search, catalog, media gateway). Read
  * from `artemis.http`; env-overridable so no host/port is hard-coded in
  * [[me.cference.artemis.Main]].
@@ -154,6 +163,14 @@ object AppConfig:
       topicReprocess = rc.getString("topic-reprocess"),
       topicTagReprocess = rc.getString("topic-tag-reprocess"),
       maxSelect = rc.getInt("max-select")
+    )
+
+  def ingest(config: Config): IngestConfig =
+    val configured = config.getString("artemis.ingest.spool-dir").trim
+    IngestConfig(
+      spoolDirectory =
+        if configured.isEmpty then Paths.get(sys.props.getOrElse("java.io.tmpdir", "/tmp"))
+        else Paths.get(configured)
     )
 
   def http(config: Config): HttpConfig =

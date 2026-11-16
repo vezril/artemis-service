@@ -8,16 +8,21 @@ import me.cference.artemis.persistence.PostEntity
 import org.apache.pekko.Done
 import org.apache.pekko.actor.typed.scaladsl.AskPattern.*
 import org.apache.pekko.actor.typed.{ActorSystem, RecipientRef}
-import org.apache.pekko.stream.scaladsl.Source
+import org.apache.pekko.stream.scaladsl.{FileIO, Source}
 import org.apache.pekko.util.{ByteString, Timeout}
 
+import java.nio.file.{Files, Path, Paths}
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.UUID
 import scala.concurrent.Future
+import scala.util.control.NonFatal
 
 /** The result of a successful upload: the post's id and its status after the upload. */
 final case class UploadResult(postId: PostId, status: String)
+
+/** A body spooled to disk: where it landed, its md5, and how many bytes were written. */
+final private case class Spooled(path: Path, md5: String, size: Long)
 
 /**
  * The upload write path (catalog-api HTTP upload + deduplicated-ingest spec). Streams the bytes to
@@ -35,6 +40,19 @@ final case class UploadResult(postId: PostId, status: String)
  * dedup/restore; the metadata-merge activates once the endpoint (or Muses) supplies tags/source. A
  * merge into a still-`pending` duplicate is a plain dedup (content can't be edited until active).
  *
+ * **The body is spooled to disk, never held in memory.** Both the content-addressed key and
+ * Apollo's `expected_md5` need the hash of the WHOLE body before the put can start, and an HTTP
+ * entity is a one-shot stream — so the bytes are written to a temp file while the md5 is computed
+ * incrementally, then streamed from that file to Apollo. Memory stays flat at one chunk regardless
+ * of object size; the cost is transient disk in `spoolDirectory` (default: the JVM temp dir,
+ * configurable via `artemis.ingest.spool-dir` so a container can point it at a sized volume). The
+ * temp file is deleted on every path, success or failure.
+ *
+ * This is what the ingest spec always required — "stream the bytes to Apollo while computing the
+ * md5" — and it matters now that producers upload VIDEO: an earlier revision folded the stream into
+ * a single `ByteString` first, which is survivable for images and fatal for a multi-gigabyte video
+ * (it is JVM heap).
+ *
  * The `lookupMd5`/ports are injected seams (production: `ReadModelRepository.findByMd5` etc.) so
  * this unit-tests with fakes and no real Apollo/Hermes/DB. `postFor` mirrors `CatalogRoutes`.
  *
@@ -50,7 +68,8 @@ final class UploadService(
     postFor: String => RecipientRef[PostEntity.Command],
     lookupMd5: String => Future[Option[(String, String)]] = _ => Future.successful(None),
     genId: () => String = () => UUID.randomUUID().toString,
-    genJobId: () => String = () => UUID.randomUUID().toString
+    genJobId: () => String = () => UUID.randomUUID().toString,
+    spoolDirectory: Path = Paths.get(sys.props.getOrElse("java.io.tmpdir", "/tmp"))
 )(using system: ActorSystem[?], timeout: Timeout):
 
   // MDC-propagating so the correlation id the HTTP edge set on the request thread rides this
@@ -67,17 +86,63 @@ final class UploadService(
       tags: Set[Tag] = Set.empty,
       source: Option[String] = None
   ): Future[UploadResult] =
+    // Spool first: the key and the ingest checksum both need the md5 of the whole body, and the
+    // entity can only be read once. The temp file is removed on every exit path below.
+    spoolToDisk(bytes).flatMap { spooled =>
+      store(spooled, contentType, mediaType, tags, source)
+        .andThen { case _ => discard(spooled.path) }
+    }
+
+  /** Put the spooled file, then dedup/create. Split out so cleanup wraps the whole tail. */
+  private def store(
+      spooled: Spooled,
+      contentType: String,
+      mediaType: String,
+      tags: Set[Tag],
+      source: Option[String]
+  ): Future[UploadResult] =
+    val key = originalKey(spooled.md5, contentType)
+    val header =
+      PutHeader(
+        bucket = Bucket,
+        `object` = key,
+        contentType = contentType,
+        expectedMd5 = spooled.md5
+      )
     for
-      // Buffer the stream to compute the md5 (fine at personal scale); re-stream the same bytes.
-      buffered <- bytes.runFold(ByteString.empty)(_ ++ _)
-      md5 = md5Hex(buffered)
-      key = originalKey(md5, contentType)
-      header =
-        PutHeader(bucket = Bucket, `object` = key, contentType = contentType, expectedMd5 = md5)
       // A checksum mismatch fails this Future → no Post created/merged, no job published.
-      _ <- uploader.put(header, Source.single(buffered))
-      result <- dedupeOrCreate(md5, key, contentType, mediaType, tags, source)
+      _ <- uploader.put(header, FileIO.fromPath(spooled.path))
+      result <- dedupeOrCreate(spooled.md5, key, contentType, mediaType, tags, source)
     yield result
+
+  /**
+   * Write the body to a temp file, hashing as it goes. `map` (not `wireTap`) does the digesting:
+   * `wireTap` is best-effort and may drop elements under backpressure, which would silently produce
+   * the WRONG md5 — a wrong content-addressed key and a bogus dedup result.
+   */
+  private def spoolToDisk(bytes: Source[ByteString, ?]): Future[Spooled] =
+    Files.createDirectories(spoolDirectory)
+    val path = Files.createTempFile(spoolDirectory, "artemis-upload-", ".part")
+    val digest = MessageDigest.getInstance("MD5")
+
+    bytes
+      .map { chunk =>
+        digest.update(chunk.asByteBuffer)
+        chunk
+      }
+      .runWith(FileIO.toPath(path))
+      .map(io => Spooled(path, hex(digest.digest()), io.count))
+      .recoverWith { case error =>
+        // A failed or abandoned upload must not leave a multi-gigabyte .part behind.
+        discard(path)
+        Future.failed(error)
+      }
+
+  /** Best-effort temp-file removal: a cleanup failure must not mask the upload's own outcome. */
+  private def discard(path: Path): Unit =
+    try
+      val _ = Files.deleteIfExists(path)
+    catch case NonFatal(_) => ()
 
   /** Branch on whether a post already carries this md5 (deduplicated-ingest). */
   private def dedupeOrCreate(
@@ -166,11 +231,7 @@ final class UploadService(
   private def extensionOf(contentType: String): String =
     contentType.split('/').lastOption.filter(_.nonEmpty).getOrElse("bin")
 
-  private def md5Hex(bytes: ByteString): String =
-    MessageDigest
-      .getInstance("MD5")
-      .digest(bytes.toArray)
-      .map(b => f"${b & 0xff}%02x")
-      .mkString
+  private def hex(digest: Array[Byte]): String =
+    digest.map(b => f"${b & 0xff}%02x").mkString
 
   private def now(): Instant = Instant.now()
