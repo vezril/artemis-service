@@ -96,6 +96,7 @@ object Main:
     val pgCfg = AppConfig.postgres(config)
     val apolloCfg = AppConfig.apollo(config)
     val hermesCfg = AppConfig.hermes(config)
+    val ingestCfg = AppConfig.ingest(config)
     val dedupCfg = AppConfig.dedup(config)
     val gcCfg = AppConfig.gc(config)
     val reprocessCfg = AppConfig.reprocess(config)
@@ -159,7 +160,8 @@ object Main:
       new ApolloObjectUploader(apolloClient),
       new HermesMediaJobPublisher(hermesClient, hermesCfg.topicMediaProcess),
       postFor,
-      readModel.findByMd5
+      readModel.findByMd5,
+      spoolDirectory = ingestCfg.spoolDirectory
     )
 
     // The shared media blob store (Apollo-backed) for both GC paths: purge (delete a post's exact
